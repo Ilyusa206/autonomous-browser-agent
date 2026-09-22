@@ -104,11 +104,38 @@ class AutonomousAgent:
         self.tools = BrowserTools(page)
         self.max_steps = max_steps
 
+    def _risk_reason(self, name: str, arguments: dict[str, Any], observation) -> str | None:
+        """Conservative generic gate for irreversible/high-impact browser actions."""
+        if name != "click":
+            return None
+        ref = str(arguments.get("ref", ""))
+        element = next((item for item in observation.elements if item.get("ref") == ref), None)
+        if not element:
+            return None
+        haystack = " ".join(str(element.get(key, "")) for key in ("text", "name", "placeholder", "href")).lower()
+        risky_phrases = (
+            "delete", "remove", "erase", "destroy", "pay", "purchase", "buy now",
+            "place order", "confirm order", "send money", "transfer", "unsubscribe",
+            "удалить", "оплатить", "купить", "оформить заказ", "подтвердить заказ",
+            "перевести", "отписаться",
+        )
+        matched = next((phrase for phrase in risky_phrases if phrase in haystack), None)
+        if matched:
+            return f"Potentially destructive or consequential click ({matched!r}) on {ref}"
+        return None
+
+    def _confirm(self, reason: str) -> bool:
+        print(f"[safety] confirmation required: {reason}")
+        answer = input("[safety] Continue? [y/N]: ").strip().lower()
+        return answer in {"y", "yes"}
+
     def run(self, task: str) -> AgentRunResult:
         history: list[dict[str, str]] = []
+        consecutive_errors = 0
 
         for step in range(1, self.max_steps + 1):
-            observation = observe_page(self.page).render()
+            page_observation = observe_page(self.page)
+            observation = page_observation.render()
             print(f"[agent] step {step}/{self.max_steps}: asking model")
 
             decision = self.provider.decide(
@@ -127,8 +154,27 @@ class AutonomousAgent:
             arguments = decision.arguments or {}
             print(f"[agent] tool: {decision.name} {arguments}")
 
+            risk_reason = self._risk_reason(decision.name, arguments, page_observation)
+            if risk_reason and not self._confirm(risk_reason):
+                message = "Stopped before a potentially destructive action because user confirmation was not granted."
+                print(f"[safety] {message}")
+                return AgentRunResult(False, message, step)
+
             result = self.tools.execute(decision.name, arguments)
             print(f"[agent] result: ok={result.ok} {result.message}")
+
+            if result.ok:
+                consecutive_errors = 0
+            else:
+                consecutive_errors += 1
+                print(
+                    f"[recovery] action failed ({consecutive_errors}/3); "
+                    "fresh observation will be sent to the model so it can adapt"
+                )
+                if consecutive_errors >= 3:
+                    message = "Stopped after 3 consecutive browser-action failures."
+                    print(f"[recovery] {message}")
+                    return AgentRunResult(False, message, step)
 
             history.append(
                 {
