@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +30,25 @@ class GroqProvider:
             raise RuntimeError("GROQ_API_KEY is missing. Put it in the local .env file.")
         self.model = model
 
+    def _post_with_rate_limit_retry(self, **kwargs):
+        """Retry transient Groq rate limits without turning them into browser-action failures."""
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            response = requests.post(self.endpoint, **kwargs)
+            if response.status_code != 429 or attempt == max_attempts:
+                return response
+
+            retry_after = response.headers.get("retry-after")
+            try:
+                delay = float(retry_after) if retry_after else 15.0
+            except ValueError:
+                delay = 15.0
+            delay = min(max(delay + 1.0, 2.0), 30.0)
+            print(f"[provider] rate limited; retrying in {delay:.1f}s ({attempt}/{max_attempts - 1})")
+            time.sleep(delay)
+
+        return response
+
     def decide(
         self,
         *,
@@ -55,8 +75,7 @@ class GroqProvider:
         ]
         messages.extend(history)
 
-        response = requests.post(
-            self.endpoint,
+        response = self._post_with_rate_limit_retry(
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
