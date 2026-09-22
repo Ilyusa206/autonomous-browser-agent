@@ -121,6 +121,19 @@ class AutonomousAgent:
         answer = input("[safety] Continue? [y/N]: ").strip().lower()
         return answer in {"y", "yes"}
 
+    def _debug_fail_once(self, name: str, arguments: dict[str, Any]) -> bool:
+        """Deterministic demo hook for proving recovery; disabled unless env flag is set."""
+        import os
+
+        if os.getenv("BROWSER_AGENT_DEBUG_FAIL_ONCE") != "1":
+            return False
+        if getattr(self, "_debug_failure_injected", False):
+            return False
+        if name not in {"click", "type"}:
+            return False
+        self._debug_failure_injected = True
+        return True
+
     def run(self, task: str) -> AgentRunResult:
         history: list[dict[str, str]] = []
         last_action_summary = "(none yet)"
@@ -158,7 +171,15 @@ class AutonomousAgent:
                 print(f"[safety] {message}")
                 return AgentRunResult(False, message, step)
 
-            result = self.tools.execute(decision.name, arguments)
+            if self._debug_fail_once(decision.name, arguments):
+                from browser_agent.tools import ToolResult
+                result = ToolResult(
+                    ok=False,
+                    message="Injected transient browser failure for recovery demonstration",
+                    observation=observation,
+                )
+            else:
+                result = self.tools.execute(decision.name, arguments)
             print(f"[agent] result: ok={result.ok} {result.message}")
 
             if result.ok:
