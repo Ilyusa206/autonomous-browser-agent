@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from playwright.sync_api import Page
+from playwright.sync_api import Locator, Page
+
+
+INTERACTIVE_SELECTOR = (
+    'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
+)
 
 
 @dataclass(frozen=True)
@@ -29,14 +34,17 @@ class PageObservation:
         return "\n".join(lines)
 
 
+def interactive_locator(page: Page) -> Locator:
+    return page.locator(INTERACTIVE_SELECTOR)
+
+
 def observe_page(page: Page, *, max_text_chars: int = 6000, max_elements: int = 80) -> PageObservation:
     """Return a compact, LLM-friendly snapshot instead of the full page HTML."""
 
     raw = page.locator("body").evaluate(
         """(body, maxElements) => {
-            const candidates = Array.from(body.querySelectorAll(
-                'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
-            ));
+            const selector = 'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]';
+            const candidates = Array.from(body.querySelectorAll(selector));
 
             const visible = candidates.filter((el) => {
                 const style = window.getComputedStyle(el);
