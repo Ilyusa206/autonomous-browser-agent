@@ -71,6 +71,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "ask_user",
+            "description": "Pause and ask the user for missing information or a manual browser action that is required to continue, such as an address, login, CAPTCHA, permission, or preference. Do not use this for information already visible on the page.",
+            "parameters": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "wait",
             "description": "Wait briefly for dynamic page content to update.",
             "parameters": {
@@ -97,6 +109,7 @@ class AutonomousAgent:
         max_steps: int = 12,
         event_sink: Callable[[str, str], None] | None = None,
         confirm_callback: Callable[[str], bool] | None = None,
+        ask_user_callback: Callable[[str], str] | None = None,
     ) -> None:
         self.page = page
         self.provider = provider
@@ -104,6 +117,7 @@ class AutonomousAgent:
         self.max_steps = max_steps
         self.event_sink = event_sink
         self.confirm_callback = confirm_callback
+        self.ask_user_callback = ask_user_callback
 
     def _emit(self, kind: str, message: str) -> None:
         print(message)
@@ -136,6 +150,15 @@ class AutonomousAgent:
             return self.confirm_callback(reason)
         answer = input("[safety] Continue? [y/N]: ").strip().lower()
         return answer in {"y", "yes"}
+
+    def _ask_user(self, question: str) -> str:
+        self._emit("user_input", f"[user] {question}")
+        if self.ask_user_callback:
+            answer = self.ask_user_callback(question)
+        else:
+            answer = input(f"[user] {question}\n> ").strip()
+        self._emit("user_answer", f"[user] Ответ получен: {answer or '(пользователь продолжил вручную)'}")
+        return answer
 
     def _debug_fail_once(self, name: str, arguments: dict[str, Any]) -> bool:
         """Deterministic demo hook for proving recovery; disabled unless env flag is set."""
@@ -180,6 +203,13 @@ class AutonomousAgent:
             assert decision.name is not None
             arguments = decision.arguments or {}
             self._emit("tool", f"[agent] tool: {decision.name} {arguments}")
+
+            if decision.name == "ask_user":
+                question = str(arguments.get("question", "")).strip() or "Нужно действие пользователя. Выполните его в браузере и продолжите."
+                answer = self._ask_user(question)
+                last_action_summary = f"USER INPUT: {answer or 'manual browser action completed'}"
+                consecutive_errors = 0
+                continue
 
             risk_reason = self._risk_reason(decision.name, arguments, page_observation)
             if risk_reason and not self._confirm(risk_reason):
