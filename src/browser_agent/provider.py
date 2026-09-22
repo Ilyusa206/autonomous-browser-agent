@@ -17,16 +17,16 @@ class ModelDecision:
     text: str | None = None
 
 
-class ZAIProvider:
-    """Small provider adapter for Z.AI's documented Chat Completions API."""
+class GroqProvider:
+    """Provider adapter for Groq's OpenAI-compatible Chat Completions API."""
 
-    endpoint = "https://api.z.ai/api/paas/v4/chat/completions"
+    endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
-    def __init__(self, model: str = "glm-5.3") -> None:
+    def __init__(self, model: str = "openai/gpt-oss-120b") -> None:
         load_dotenv()
-        self.api_key = os.getenv("ZAI_API_KEY")
+        self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
-            raise RuntimeError("ZAI_API_KEY is missing. Put it in the local .env file.")
+            raise RuntimeError("GROQ_API_KEY is missing. Put it in the local .env file.")
         self.model = model
 
     def decide(
@@ -66,13 +66,15 @@ class ZAIProvider:
                 "messages": messages,
                 "tools": tools,
                 "tool_choice": "auto",
+                "parallel_tool_calls": False,
                 "stream": False,
-                "max_tokens": 1200,
+                "max_completion_tokens": 1200,
+                "reasoning_effort": "low",
             },
             timeout=90,
         )
         if not response.ok:
-            raise RuntimeError(f"Z.AI API error {response.status_code}: {response.text[:500]}")
+            raise RuntimeError(f"Groq API error {response.status_code}: {response.text[:500]}")
 
         payload = response.json()
         message = payload["choices"][0]["message"]
