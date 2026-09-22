@@ -12,10 +12,12 @@ dependencies = [
     "playwright>=1.55,<2",
     "python-dotenv>=1.0,<2",
     "requests>=2.32,<3",
+    "flask>=3.1,<4",
 ]
 
 [project.scripts]
 browser-agent = "browser_agent.cli:main"
+browser-agent-ui = "browser_agent.ui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
