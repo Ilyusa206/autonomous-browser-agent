@@ -87,7 +87,7 @@ class GroqProvider:
                 "tool_choice": "auto",
                 "parallel_tool_calls": False,
                 "stream": False,
-                "max_completion_tokens": 1200,
+                "max_completion_tokens": 450,
                 "reasoning_effort": "low",
             },
             timeout=90,
