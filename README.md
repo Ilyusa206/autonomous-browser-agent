@@ -1,21 +1,50 @@
-# Autonomous Browser Agent
+# Автономный браузерный AI-агент
 
-A test-task implementation of a generic AI agent that can operate a visible browser and complete multi-step web tasks.
+Тестовое задание: универсальный AI-агент, который получает текстовую задачу, самостоятельно исследует веб-страницы и управляет видимым Chromium через Playwright.
 
-## Current milestone
+> Репозиторий и интерфейс намеренно оформлены на русском языке. Имена Python-модулей, API и технических сущностей оставлены на английском как стандарт разработки.
 
-Milestone 1 intentionally contains only the browser foundation:
+## Что уже работает
 
-- Python 3.11+
-- Playwright
-- visible Chromium (headed mode)
-- persistent browser profile
-- CLI entry point
-- no site-specific selectors or task-specific automation
+- видимый Chromium в headed-режиме;
+- постоянный локальный профиль: cookies и ручная авторизация сохраняются между запусками;
+- автономный цикл «наблюдение → решение модели → действие → новое наблюдение»;
+- универсальные инструменты `navigate`, `click`, `type`, `scroll`, `back`, `wait`;
+- никаких селекторов и маршрутов, зашитых под конкретные сайты;
+- компактное наблюдение вместо отправки модели полного HTML/DOM;
+- временные ссылки на элементы вида `e1`, `e2`, которые пересоздаются после изменения страницы;
+- ограниченная память: текущая страница + краткий результат последнего действия вместо накопления всех страниц;
+- восстановление после ошибок browser action;
+- повтор запросов при временном rate limit LLM-провайдера;
+- safety gate: потенциально необратимые действия требуют подтверждения пользователя;
+- CLI и локальная web-панель с live timeline.
 
-The LLM provider and autonomous agent loop are the next milestone. Keeping the browser layer separate lets us validate the runtime first and avoids coupling the architecture to a provider before the model choice is verified.
+## Архитектура
 
-## Quick start (Windows PowerShell)
+```text
+Пользователь
+    │
+    ├── CLI / локальная Control Panel
+    │
+    ▼
+AutonomousAgent
+    │
+    ├── compact page observation
+    ├── bounded action memory
+    ├── safety / recovery
+    └── LLM provider
+            │
+            ▼
+       generic tools
+            │
+         Playwright
+            │
+     visible Chromium
+```
+
+Browser layer не знает о конкретных сайтах. Модель получает только компактное описание текущей страницы и схемы универсальных инструментов, сама выбирает элемент и следующее действие.
+
+## Быстрый запуск — Windows PowerShell
 
 ```powershell
 git clone https://github.com/Ilyusa206/autonomous-browser-agent.git
@@ -24,41 +53,82 @@ cd autonomous-browser-agent
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-pip install -e .
+python -m pip install -e .
 python -m playwright install chromium
-
-browser-agent
 ```
 
-A visible Chromium window should open. The profile is stored locally in `.browser-profile/`, so cookies and login state survive restarts.
-
-You can also start from a URL:
-
-```powershell
-browser-agent --url https://example.com
-```
-
-Close the browser window to stop the program.
-
-## Security
-
-Browser profiles, environment files, credentials, tokens and local artifacts are excluded from Git. Never commit authenticated browser state or API keys.
-
-## Planned architecture
+Создайте локальный `.env`:
 
 ```text
-User task
-   |
-Agent loop
-   |---- LLM provider (Claude/OpenAI-compatible adapter)
-   |
-   |---- compact page observation
-   |
-   |---- generic browser tools
-              |
-           Playwright
-              |
-        visible Chromium
+GROQ_API_KEY=your_key_here
 ```
 
-The final agent will discover page elements from the current page state rather than relying on selectors or routes hardcoded for individual websites.
+Файл `.env` и профиль браузера исключены из Git.
+
+### Визуальная панель
+
+```powershell
+browser-agent-ui
+```
+
+Панель откроется локально на `http://127.0.0.1:8765`. Введите стартовый URL и задачу, затем нажмите **«Запустить»**. Управляемый Chromium откроется отдельно, а действия агента будут отображаться в панели.
+
+### CLI
+
+```powershell
+browser-agent --url https://www.python.org --task "Найди документацию Python по asyncio и кратко объясни, для чего используется asyncio." --max-steps 12
+```
+
+## Управление контекстом
+
+Агент не отправляет модели полную веб-страницу. Observation содержит URL, title, ограниченный visible text и ограниченный список видимых интерактивных элементов. После каждого browser action создаётся новое observation.
+
+Предыдущие страницы не накапливаются в prompt. Модель получает текущую страницу и компактное резюме только последнего действия. Это ограничивает рост контекста и уменьшает расход токенов на длинных сценариях.
+
+## Надёжность
+
+Browser action возвращает структурированный результат `ok/message/observation`. После ошибки агент получает свежее состояние страницы и может выбрать другой ход. После трёх последовательных browser errors выполнение останавливается.
+
+Для воспроизводимой демонстрации recovery предусмотрен opt-in debug hook:
+
+```powershell
+$env:BROWSER_AGENT_DEBUG_FAIL_ONCE="1"
+browser-agent --url https://example.com --task "Узнай, какая организация поддерживает example domains." --max-steps 8
+Remove-Item Env:BROWSER_AGENT_DEBUG_FAIL_ONCE
+```
+
+В обычном режиме hook полностью выключен.
+
+## Безопасность
+
+Перед потенциально необратимым действием — например удалением, оплатой, покупкой или переводом — deterministic safety layer останавливает выполнение и требует явного подтверждения. Решение LLM само по себе не является разрешением на такое действие.
+
+API-ключи, `.env`, browser profile, auth state и локальные артефакты не должны попадать в Git.
+
+## LLM и провайдер
+
+Текущий development runtime использует Groq OpenAI-compatible API и модель `openai/gpt-oss-120b`. Provider изолирован от browser/agent слоя, поэтому модель и транспорт можно заменить без переписывания Playwright-инструментов.
+
+Важно: формулировка исходного тестового задания отдельно требует Claude или OpenAI. Текущий Groq runtime используется для разработки и тестирования; перед финальной сдачей этот пункт должен быть закрыт совместимым финальным provider configuration.
+
+## Почему не MCP и не Chrome Extension
+
+Для однодневного прототипа browser tools реализованы как прямые typed Python tools: это уменьшает integration surface и позволяет проверить сам автономный цикл. Граница между агентом и инструментами уже выделена, поэтому их можно вынести за MCP transport позднее без изменения логики наблюдения и принятия решений.
+
+Chrome Extension также не является обязательным требованием задания: пользовательский интерфейс допускается в отдельном окне или терминале. Локальная Control Panel оставляет agent core независимым от конкретного браузерного UI. В дальнейшем этот же control surface можно перенести в Chrome Side Panel.
+
+## Проверенные сценарии
+
+1. Example Domain: агент самостоятельно перешёл на IANA и определил организацию, поддерживающую example domains.
+2. Python.org: агент прошёл от главной страницы к документации, выполнил поиск `asyncio`, открыл документацию и сформулировал ответ.
+3. Recovery: первое browser action было детерминированно сломано debug hook; агент получил fresh observation, повторно принял решение и завершил задачу.
+4. Safety: на локальной странице действие `Delete account` было остановлено до клика, запрошено подтверждение и отменено пользователем.
+
+## Ограничения и следующие шаги
+
+- бесплатный Groq tier может вводить паузы из-за TPM rate limits;
+- safety-классификатор сейчас консервативный и основан на семантике выбранного элемента;
+- нет полноценного vision/screenshot reasoning;
+- нет sub-agent architecture;
+- финальный Claude/OpenAI runtime ещё нужно подключить;
+- MCP и Chrome Side Panel оставлены как дальнейшее развитие.
