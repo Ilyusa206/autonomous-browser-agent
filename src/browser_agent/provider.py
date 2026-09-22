@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import requests
 from dotenv import load_dotenv
@@ -23,12 +23,13 @@ class GroqProvider:
 
     endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
-    def __init__(self, model: str = "openai/gpt-oss-120b") -> None:
+    def __init__(self, model: str = "openai/gpt-oss-120b", event_sink: Callable[[str, str], None] | None = None) -> None:
         load_dotenv()
         self.api_key = os.getenv("GROQ_API_KEY")
         if not self.api_key:
             raise RuntimeError("GROQ_API_KEY is missing. Put it in the local .env file.")
         self.model = model
+        self.event_sink = event_sink
 
     def _post_with_rate_limit_retry(self, **kwargs):
         """Retry transient Groq rate limits without turning them into browser-action failures."""
@@ -44,7 +45,10 @@ class GroqProvider:
             except ValueError:
                 delay = 15.0
             delay = min(max(delay + 1.0, 2.0), 30.0)
-            print(f"[provider] rate limited; retrying in {delay:.1f}s ({attempt}/{max_attempts - 1})")
+            message = f"Лимит API: повтор через {delay:.0f} с ({attempt}/{max_attempts - 1})"
+            print(f"[provider] {message}")
+            if self.event_sink:
+                self.event_sink("waiting", message)
             time.sleep(delay)
 
         return response
