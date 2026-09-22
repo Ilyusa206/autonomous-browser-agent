@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from browser_agent.observation import observe_page
 from browser_agent.provider import GroqProvider
@@ -90,11 +90,25 @@ class AgentRunResult:
 
 
 class AutonomousAgent:
-    def __init__(self, page, provider: GroqProvider, max_steps: int = 12) -> None:
+    def __init__(
+        self,
+        page,
+        provider: GroqProvider,
+        max_steps: int = 12,
+        event_sink: Callable[[str, str], None] | None = None,
+        confirm_callback: Callable[[str], bool] | None = None,
+    ) -> None:
         self.page = page
         self.provider = provider
         self.tools = BrowserTools(page)
         self.max_steps = max_steps
+        self.event_sink = event_sink
+        self.confirm_callback = confirm_callback
+
+    def _emit(self, kind: str, message: str) -> None:
+        print(message)
+        if self.event_sink:
+            self.event_sink(kind, message)
 
     def _risk_reason(self, name: str, arguments: dict[str, Any], observation) -> str | None:
         """Conservative generic gate for irreversible/high-impact browser actions."""
@@ -117,7 +131,9 @@ class AutonomousAgent:
         return None
 
     def _confirm(self, reason: str) -> bool:
-        print(f"[safety] confirmation required: {reason}")
+        self._emit("safety", f"[safety] confirmation required: {reason}")
+        if self.confirm_callback:
+            return self.confirm_callback(reason)
         answer = input("[safety] Continue? [y/N]: ").strip().lower()
         return answer in {"y", "yes"}
 
@@ -142,7 +158,7 @@ class AutonomousAgent:
         for step in range(1, self.max_steps + 1):
             page_observation = observe_page(self.page)
             observation = page_observation.render()
-            print(f"[agent] step {step}/{self.max_steps}: asking model")
+            self._emit("thinking", f"[agent] step {step}/{self.max_steps}: asking model")
 
             decision = self.provider.decide(
                 task=task,
@@ -158,17 +174,17 @@ class AutonomousAgent:
 
             if decision.kind == "finish":
                 message = decision.text or "Task complete."
-                print(f"[agent] finish: {message}")
+                self._emit("finish", f"[agent] finish: {message}")
                 return AgentRunResult(True, message, step)
 
             assert decision.name is not None
             arguments = decision.arguments or {}
-            print(f"[agent] tool: {decision.name} {arguments}")
+            self._emit("tool", f"[agent] tool: {decision.name} {arguments}")
 
             risk_reason = self._risk_reason(decision.name, arguments, page_observation)
             if risk_reason and not self._confirm(risk_reason):
                 message = "Stopped before a potentially destructive action because user confirmation was not granted."
-                print(f"[safety] {message}")
+                self._emit("safety", f"[safety] {message}")
                 return AgentRunResult(False, message, step)
 
             if self._debug_fail_once(decision.name, arguments):
@@ -180,19 +196,20 @@ class AutonomousAgent:
                 )
             else:
                 result = self.tools.execute(decision.name, arguments)
-            print(f"[agent] result: ok={result.ok} {result.message}")
+            self._emit("result", f"[agent] result: ok={result.ok} {result.message}")
 
             if result.ok:
                 consecutive_errors = 0
             else:
                 consecutive_errors += 1
-                print(
+                self._emit(
+                    "recovery",
                     f"[recovery] action failed ({consecutive_errors}/3); "
-                    "fresh observation will be sent to the model so it can adapt"
+                    "fresh observation will be sent to the model so it can adapt",
                 )
                 if consecutive_errors >= 3:
                     message = "Stopped after 3 consecutive browser-action failures."
-                    print(f"[recovery] {message}")
+                    self._emit("recovery", f"[recovery] {message}")
                     return AgentRunResult(False, message, step)
 
             last_action_summary = (
@@ -201,5 +218,5 @@ class AutonomousAgent:
             )
 
         message = f"Stopped after max_steps={self.max_steps} without a final answer."
-        print(f"[agent] {message}")
+        self._emit("finish", f"[agent] {message}")
         return AgentRunResult(False, message, self.max_steps)
