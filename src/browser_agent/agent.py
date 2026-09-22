@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from browser_agent.observation import observe_page
-from browser_agent.provider import ZAIProvider
+from browser_agent.provider import GroqProvider
 from browser_agent.tools import BrowserTools
 
 
@@ -98,7 +98,7 @@ class AgentRunResult:
 
 
 class AutonomousAgent:
-    def __init__(self, page, provider: ZAIProvider, max_steps: int = 12) -> None:
+    def __init__(self, page, provider: GroqProvider, max_steps: int = 12) -> None:
         self.page = page
         self.provider = provider
         self.tools = BrowserTools(page)
