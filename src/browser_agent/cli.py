@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from browser_agent.browser import BrowserController
 from browser_agent.observation import observe_page
+from browser_agent.tools import BrowserTools
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +26,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print a compact LLM-friendly observation of the current page.",
     )
+    parser.add_argument(
+        "--tool",
+        choices=["read", "click", "type", "scroll", "back", "wait", "navigate"],
+        help="Run one generic browser tool after startup (debug helper).",
+    )
+    parser.add_argument(
+        "--args",
+        default="{}",
+        help='JSON arguments for --tool, for example: --args "{\"ref\": \"e1\"}"',
+    )
     return parser
 
 
@@ -42,6 +54,16 @@ def main() -> None:
             print("\n--- PAGE OBSERVATION ---")
             print(observe_page(page).render())
             print("--- END OBSERVATION ---\n")
+
+        if args.tool:
+            tool_args = json.loads(args.args)
+            result = BrowserTools(page).execute(args.tool, tool_args)
+            print(f"\n--- TOOL RESULT: {args.tool} ---")
+            print(f"ok={result.ok}")
+            print(result.message)
+            if result.observation:
+                print(result.observation)
+            print("--- END TOOL RESULT ---\n")
 
         controller.wait_until_closed()
     except KeyboardInterrupt:
