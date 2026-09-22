@@ -79,14 +79,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "read",
-            "description": "Read the current page again without changing it.",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
 ]
 
 
@@ -131,6 +123,7 @@ class AutonomousAgent:
 
     def run(self, task: str) -> AgentRunResult:
         history: list[dict[str, str]] = []
+        last_action_summary = "(none yet)"
         consecutive_errors = 0
 
         for step in range(1, self.max_steps + 1):
@@ -141,7 +134,12 @@ class AutonomousAgent:
             decision = self.provider.decide(
                 task=task,
                 observation=observation,
-                history=history,
+                history=[
+                    {
+                        "role": "user",
+                        "content": f"LAST ACTION: {last_action_summary}",
+                    }
+                ],
                 tools=TOOL_SCHEMAS,
             )
 
@@ -176,17 +174,10 @@ class AutonomousAgent:
                     print(f"[recovery] {message}")
                     return AgentRunResult(False, message, step)
 
-            history.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"Previous action: {decision.name} {arguments}\n"
-                        f"Result: ok={result.ok}; {result.message}\n"
-                        "Continue the original task using the CURRENT PAGE observation."
-                    ),
-                }
+            last_action_summary = (
+                f"{decision.name} {arguments} -> "
+                f"ok={result.ok}; {result.message[:180]}"
             )
-            history = history[-6:]
 
         message = f"Stopped after max_steps={self.max_steps} without a final answer."
         print(f"[agent] {message}")
