@@ -38,7 +38,7 @@ def interactive_locator(page: Page) -> Locator:
     return page.locator(INTERACTIVE_SELECTOR)
 
 
-def observe_page(page: Page, *, max_text_chars: int = 6000, max_elements: int = 80) -> PageObservation:
+def observe_page(page: Page, *, max_text_chars: int = 2500, max_elements: int = 40) -> PageObservation:
     """Return a compact, LLM-friendly snapshot instead of the full page HTML."""
 
     raw = page.locator("body").evaluate(
@@ -65,7 +65,7 @@ def observe_page(page: Page, *, max_text_chars: int = 6000, max_elements: int = 
                     text: (el.innerText || el.value || '').replace(/\\s+/g, ' ').trim().slice(0, 180),
                     name: el.getAttribute('aria-label') || el.getAttribute('name') || '',
                     placeholder: el.getAttribute('placeholder') || '',
-                    href: el.tagName.toLowerCase() === 'a' ? (el.getAttribute('href') || '') : ''
+                    href: el.tagName.toLowerCase() === 'a' ? (el.getAttribute('href') || '').slice(0, 220) : ''
                 }))
             };
         }""",
