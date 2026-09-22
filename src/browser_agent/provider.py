@@ -65,6 +65,8 @@ class GroqProvider:
                     "provided generic browser tools. Inspect the compact page observation; element "
                     "refs such as e1 are temporary and valid only for the current observation. "
                     "Do not invent refs or assume site-specific routes/selectors. Work step by step. "
+                    "The CURRENT PAGE observation is fresh after every browser action, so do not request "
+                    "a redundant read. If the visible text already answers the task, finish immediately. "
                     "If the task is complete, answer concisely instead of calling another tool."
                 ),
             },
