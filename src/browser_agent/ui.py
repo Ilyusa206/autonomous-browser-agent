@@ -40,8 +40,8 @@ button{border:0;border-radius:12px;padding:12px 18px;font-weight:700;cursor:poin
 <section class="card">
 <div class="status"><strong>Задача</strong><span id="status" class="pill">Готов</span></div>
 <textarea id="task" placeholder="Что нужно сделать в браузере?"></textarea>
-<div class="row"><input id="url" value="https://www.python.org" aria-label="Стартовый URL"><button id="run">Запустить</button></div>
-<div class="small">Видимый Chromium · постоянная сессия · универсальные инструменты · подтверждение опасных действий</div>
+<div class="row"><input id="url" value="about:blank" aria-label="Стартовый URL"><button id="run">Запустить</button></div>
+<div class="small">Стартовый URL необязателен · видимый Chromium · постоянная сессия · универсальные инструменты · подтверждение опасных действий</div>
 <div id="approval" class="approval"><strong>Нужно подтверждение</strong><p id="reason"></p><div class="row"><button class="secondary" onclick="approve(false)">Отмена</button><button onclick="approve(true)">Разрешить один раз</button></div></div>
 <div id="userprompt" class="userprompt approval"><strong>Нужна ваша помощь</strong><p id="question"></p><div class="row"><input id="useranswer" placeholder="Ответьте здесь или выполните действие вручную в браузере"><button onclick="answerUser()">Продолжить</button></div><div class="small">Если агент просит решить CAPTCHA, войти в аккаунт или дать разрешение браузеру — сделайте это в открытом Chromium и нажмите «Продолжить».</div></div>
 <div id="answer" class="answer"><b>Результат</b><p id="answerText"></p></div><div id="timeline" class="timeline"></div>
