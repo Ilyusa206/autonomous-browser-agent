@@ -34,9 +34,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--args",
         default="{}",
-        help='JSON arguments for --tool, for example: --args "{\"ref\": \"e1\"}"',
+        help='JSON arguments for --tool. Example in PowerShell: --args ''{"ref":"e1"}''',
+    )
+    parser.add_argument(
+        "--ref",
+        help="Convenience argument for click/type debug commands, avoiding shell JSON quoting.",
+    )
+    parser.add_argument(
+        "--text",
+        help="Convenience argument for the type debug command.",
     )
     return parser
+
+
+def _tool_arguments(args: argparse.Namespace) -> dict:
+    if args.ref is not None or args.text is not None:
+        parsed: dict[str, object] = {}
+        if args.ref is not None:
+            parsed["ref"] = args.ref
+        if args.text is not None:
+            parsed["text"] = args.text
+        return parsed
+
+    try:
+        return json.loads(args.args)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            "Invalid --args JSON. In PowerShell, prefer --ref/--text for simple tests, "
+            "for example: browser-agent --tool click --ref e1"
+        ) from exc
 
 
 def main() -> None:
@@ -56,8 +82,7 @@ def main() -> None:
             print("--- END OBSERVATION ---\n")
 
         if args.tool:
-            tool_args = json.loads(args.args)
-            result = BrowserTools(page).execute(args.tool, tool_args)
+            result = BrowserTools(page).execute(args.tool, _tool_arguments(args))
             print(f"\n--- TOOL RESULT: {args.tool} ---")
             print(f"ok={result.ok}")
             print(result.message)
