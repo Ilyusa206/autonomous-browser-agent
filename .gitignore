@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Browser state - may contain authenticated sessions
+.browser-profile/
+playwright/.auth/
+
+# Local artifacts
+artifacts/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
