@@ -34,15 +34,24 @@ class BrowserLLMProvider(Protocol):
 
 
 def _compact_observation(observation: str, limit: int = 6500) -> str:
-    """Keep URL/title/elements and a bounded visible-text tail to control latency/cost."""
+    """Hard-bound an observation while preserving page identity and useful evidence."""
+    if limit <= 0:
+        return ""
     if len(observation) <= limit:
         return observation
+
     marker = "\nVISIBLE TEXT:\n"
-    head, sep, text = observation.partition(marker)
+    head, sep, visible_text = observation.partition(marker)
     if not sep:
         return observation[:limit]
-    remaining = max(limit - len(head) - len(marker), 500)
-    return head + marker + text[:remaining]
+
+    # Interactive-element dumps can themselves exceed the budget. Keep the
+    # beginning (URL/title + highest-ranked elements) and reserve space for
+    # visible page evidence instead of allowing the header to overflow.
+    text_budget = min(1200, max(300, limit // 4))
+    head_budget = max(0, limit - len(marker) - text_budget)
+    compact = head[:head_budget] + marker + visible_text[:text_budget]
+    return compact[:limit]
 
 
 class GroqProvider:
@@ -130,7 +139,7 @@ class GroqProvider:
                     "browser action such as CAPTCHA, login, or browser "
                     "permission, call ask_user with a concise question instead of guessing, repeatedly scrolling, "
                     "or trying to bypass the challenge. NEVER request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to perform authentication manually in the browser, then continue from a fresh observation. After the user responds, inspect the fresh page and continue. "
-                    "Never call ask_user merely to ask the user to click, focus, open, scroll, or type into an element that appears in CURRENT PAGE; use the available browser tools yourself. If an action fails, inspect the fresh observation and try a different observed element or interaction before escalating. Never navigate to the current URL again just to refresh state; use wait or inspect the fresh observation. " "Treat CURRENT PAGE as the source of truth for browser state, not assumptions from the plan. If CURRENT PAGE shows inbox/mail controls, messages, search, profile/account UI, or other authenticated application content, assume the session is already authenticated and continue; never ask the user to sign in merely because the plan mentioned authentication. " "The CURRENT PAGE observation is fresh after every browser action, so do not request "
+                    "Never call ask_user merely to ask the user to click, focus, open, scroll, or type into an element that appears in CURRENT PAGE; use the available browser tools yourself. If an action fails, inspect the fresh observation and try a different observed element or interaction before escalating. Never navigate to the current URL again just to refresh state; use wait or inspect the fresh observation. " "Treat CURRENT PAGE as the source of truth for browser state, not assumptions from the plan. If CURRENT PAGE shows authenticated application controls or account-specific content rather than an authentication challenge, treat the existing session as authenticated and continue. " "The CURRENT PAGE observation is fresh after every browser action, so do not request "
                     "a redundant read. If the visible text already answers the task, finish immediately. "
                     "If the task is complete, answer concisely instead of calling another tool."
                 ),
@@ -402,7 +411,7 @@ class AnthropicProvider:
             "You are an autonomous browser agent. Complete the task with generic browser tools. "
             "Element refs are temporary and only valid for the current observation. Never invent refs, selectors, or routes. "
             "Choose ordinary reversible details yourself. Ask the user only for information they alone can provide, login/CAPTCHA, "
-            "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to authenticate manually in the browser only when CURRENT PAGE actually shows a login/authentication challenge. Treat CURRENT PAGE as authoritative: if it shows inbox/mail controls, messages, search, profile/account UI, or other authenticated application content, the session is already authenticated and you must continue. Never ask the user to click/focus/open/scroll/type an element that is present in CURRENT PAGE; use browser tools yourself. If an action fails, adapt using a fresh observation before escalating. Never navigate to the current URL repeatedly. The current observation is fresh. If complete, answer concisely."
+            "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to authenticate manually in the browser only when CURRENT PAGE actually shows a login/authentication challenge. Treat CURRENT PAGE as authoritative: if it shows authenticated application controls or account-specific content rather than an authentication challenge, treat the existing session as authenticated and continue. Never ask the user to click/focus/open/scroll/type an element that is present in CURRENT PAGE; use browser tools yourself. If an action fails, adapt using a fresh observation before escalating. Never navigate to the current URL repeatedly. The current observation is fresh. If complete, answer concisely."
         )
         anthropic_tools = [{"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"]["parameters"]} for t in tools]
         messages = [{"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"}]
