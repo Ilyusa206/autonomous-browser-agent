@@ -51,7 +51,7 @@ def test_ollama_plan_uses_native_json_mode_and_disables_thinking():
     assert payload["think"] is False
     assert payload["stream"] is False
     assert payload["format"] == "json"
-    assert payload["options"]["num_predict"] == 350
+    assert payload["options"]["num_predict"] == 180
     assert plan["objective"] == "open page"
 
 
