@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text")
     parser.add_argument("--task", help="Run the autonomous LLM browser loop for this task.")
     parser.add_argument("--model", default="openai/gpt-oss-120b")
-    parser.add_argument("--max-steps", type=int, default=12)
+    parser.add_argument("--max-steps", type=int, default=24)
     return parser
 
 
