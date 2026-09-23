@@ -178,29 +178,31 @@ class GroqProvider:
 
 
 class OllamaProvider(GroqProvider):
-    """Local OpenAI-compatible runtime served by Ollama. No API key or cloud account required."""
+    """Local Ollama runtime using its native /api/chat contract."""
 
-    endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+    default_base_url = "http://127.0.0.1:11434"
 
     def __init__(self, model: str | None = None, event_sink: Callable[[str, str], None] | None = None) -> None:
         load_dotenv()
         self.api_key = "ollama"
         self.model = model or os.getenv("OLLAMA_MODEL", "qwen3:8b")
         self.event_sink = event_sink
-        self.endpoint = os.getenv("OLLAMA_BASE_URL", self.endpoint).rstrip("/")
-        if not self.endpoint.endswith("/chat/completions"):
-            self.endpoint += "/chat/completions"
+        configured = os.getenv("OLLAMA_BASE_URL", self.default_base_url).rstrip("/")
+        if configured.endswith("/v1"):
+            configured = configured[:-3]
+        if configured.endswith("/chat/completions"):
+            configured = configured[: -len("/chat/completions")]
+            if configured.endswith("/v1"):
+                configured = configured[:-3]
+        self.endpoint = configured.rstrip("/") + "/api/chat"
 
-    def _post_with_rate_limit_retry(self, **kwargs):
-        # Qwen3 reasoning is useful interactively but makes a CPU-only browser loop
-        # dramatically slower. Ollama's OpenAI-compatible API accepts `think`
-        # as an extra request field, so disable it for planner/executor/verifier.
-        payload = dict(kwargs.get("json") or {})
-        payload["think"] = False
-        payload.pop("reasoning_effort", None)
-        kwargs["json"] = payload
+    def _native_request(self, payload: dict[str, Any], *, timeout: int = 90) -> dict[str, Any]:
+        body = dict(payload)
+        body["model"] = self.model
+        body["stream"] = False
+        body["think"] = False
         try:
-            return requests.post(self.endpoint, **kwargs)
+            response = requests.post(self.endpoint, json=body, timeout=timeout)
         except requests.Timeout as exc:
             raise RuntimeError(
                 f"Local Ollama timed out while running {self.model}. "
@@ -210,6 +212,88 @@ class OllamaProvider(GroqProvider):
             raise RuntimeError(
                 "Cannot connect to local Ollama. Start it first and make sure the configured model is pulled."
             ) from exc
+        if not response.ok:
+            raise RuntimeError(f"Ollama API error {response.status_code}: {response.text[:500]}")
+        return response.json()
+
+    def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
+        messages = [
+            {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes. Never plan to request, collect, or type passwords, OTP/2FA codes, API keys, or other secrets. Assume an existing browser session may already be authenticated; inspect it first. If authentication is actually required, plan for the user to complete login manually."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}"},
+        ]
+        payload = self._native_request(
+            {
+                "messages": messages,
+                "format": "json",
+                "options": {"num_predict": 350},
+            }
+        )
+        data = json.loads(payload.get("message", {}).get("content") or "{}")
+        return {
+            "objective": str(data.get("objective", task)),
+            "steps": [str(x) for x in data.get("steps", [])][:7],
+            "success_criteria": [str(x) for x in data.get("success_criteria", [])][:7],
+        }
+
+    def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
+        messages = [
+            {"role": "system", "content": "You are a strict browser-agent verifier. A success claim is not evidence. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{_compact_observation(observation, 5000)}"},
+        ]
+        payload = self._native_request(
+            {
+                "messages": messages,
+                "format": "json",
+                "options": {"num_predict": 300},
+            }
+        )
+        data = json.loads(payload.get("message", {}).get("content") or "{}")
+        return GoalVerification(
+            bool(data.get("complete")),
+            str(data.get("summary", "")),
+            [str(x) for x in data.get("missing", [])],
+        )
+
+    def decide(
+        self,
+        *,
+        task: str,
+        observation: str,
+        history: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+    ) -> ModelDecision:
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are an autonomous browser agent. Complete the user's task using only the provided generic browser tools. "
+                    "Element refs are temporary and valid only for CURRENT PAGE. Never invent refs, selectors, or site-specific routes. "
+                    "Treat CURRENT PAGE as authoritative. If the current site is unrelated, navigate to an appropriate public site or search service. "
+                    "Make ordinary reversible choices yourself. Ask the user only for information they alone can provide, manual authentication/CAPTCHA, "
+                    "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets. "
+                    "Never ask the user to click, focus, open, scroll, or type into an observed element; use browser tools yourself. "
+                    "If an action fails, inspect the fresh observation and adapt. If visible page evidence completes the task, answer concisely."
+                ),
+            },
+            {"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"},
+        ]
+        messages.extend(history)
+        payload = self._native_request(
+            {
+                "messages": messages,
+                "tools": tools,
+                "options": {"num_predict": 450},
+            }
+        )
+        message = payload.get("message") or {}
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            function = tool_calls[0].get("function") or {}
+            arguments = function.get("arguments") or {}
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            return ModelDecision(kind="tool", name=function.get("name"), arguments=arguments)
+        return ModelDecision(kind="finish", text=(message.get("content") or "").strip())
 
 
 
