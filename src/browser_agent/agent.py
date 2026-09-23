@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from browser_agent.observation import observe_page
-from browser_agent.provider import GroqProvider
+from browser_agent.provider import BrowserLLMProvider, get_provider_from_env
 from browser_agent.tools import BrowserTools
 
 
