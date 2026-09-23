@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 browser-agent = "browser_agent.cli:main"
 browser-agent-ui = "browser_agent.ui:main"
+browser-agent-bridge = "browser_agent.extension_bridge:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
