@@ -21,7 +21,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ref")
     parser.add_argument("--text")
     parser.add_argument("--task", help="Run the autonomous LLM browser loop for this task.")
-    parser.add_argument("--model", default="openai/gpt-oss-120b")
     parser.add_argument("--max-steps", type=int, default=24)
     return parser
 
@@ -53,7 +52,7 @@ def main() -> None:
         if args.task:
             AutonomousAgent(
                 page,
-                GroqProvider(model=args.model),
+                get_provider_from_env(),
                 max_steps=args.max_steps,
             ).run(args.task)
         elif args.observe:
