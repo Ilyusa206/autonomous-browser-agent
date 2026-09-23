@@ -192,8 +192,20 @@ class OllamaProvider(GroqProvider):
             self.endpoint += "/chat/completions"
 
     def _post_with_rate_limit_retry(self, **kwargs):
+        # Qwen3 reasoning is useful interactively but makes a CPU-only browser loop
+        # dramatically slower. Ollama's OpenAI-compatible API accepts `think`
+        # as an extra request field, so disable it for planner/executor/verifier.
+        payload = dict(kwargs.get("json") or {})
+        payload["think"] = False
+        payload.pop("reasoning_effort", None)
+        kwargs["json"] = payload
         try:
             return requests.post(self.endpoint, **kwargs)
+        except requests.Timeout as exc:
+            raise RuntimeError(
+                f"Local Ollama timed out while running {self.model}. "
+                "The model may be too slow for the current browser-agent request."
+            ) from exc
         except requests.ConnectionError as exc:
             raise RuntimeError(
                 "Cannot connect to local Ollama. Start it first and make sure the configured model is pulled."
