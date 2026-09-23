@@ -296,16 +296,13 @@ class OllamaProvider(GroqProvider):
             {
                 "role": "system",
                 "content": (
-                    "You are an autonomous browser agent. Complete the user's task using only the provided generic browser tools. "
-                    "Element refs are temporary and valid only for CURRENT PAGE. Never invent refs, selectors, or site-specific routes. "
-                    "Treat CURRENT PAGE as authoritative. If the current site is unrelated, navigate to an appropriate public site or search service. "
-                    "Make ordinary reversible choices yourself. Ask the user only for information they alone can provide, manual authentication/CAPTCHA, "
-                    "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets. "
-                    "Never ask the user to click, focus, open, scroll, or type into an observed element; use browser tools yourself. "
-                    "If an action fails, inspect the fresh observation and adapt. If visible page evidence completes the task, answer concisely."
-                ),
-            },
-            {"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"},
+                    "Autonomous browser agent. Use generic tools to complete TASK. "
+                    "CURRENT PAGE is authoritative; refs are temporary. Never invent refs, selectors, or routes. "
+                    "If the page is unrelated, navigate. Make reversible choices yourself and act without asking permission. "
+                    "Never request secrets. If login/CAPTCHA or truly user-only information blocks progress, stop and explain briefly. "
+                    "Adapt after failures. If CURRENT PAGE proves the task complete, answer concisely."
+                ),            },
+            {"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation, 3600)}"},
         ]
         messages.extend(history)
         payload = self._native_request(
