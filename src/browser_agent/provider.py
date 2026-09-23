@@ -130,7 +130,7 @@ class GroqProvider:
                     "browser action such as CAPTCHA, login, or browser "
                     "permission, call ask_user with a concise question instead of guessing, repeatedly scrolling, "
                     "or trying to bypass the challenge. NEVER request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to perform authentication manually in the browser, then continue from a fresh observation. After the user responds, inspect the fresh page and continue. "
-                    "The CURRENT PAGE observation is fresh after every browser action, so do not request "
+                    "Never call ask_user merely to ask the user to click, focus, open, scroll, or type into an element that appears in CURRENT PAGE; use the available browser tools yourself. If an action fails, inspect the fresh observation and try a different observed element or interaction before escalating. Never navigate to the current URL again just to refresh state; use wait or inspect the fresh observation. " "The CURRENT PAGE observation is fresh after every browser action, so do not request "
                     "a redundant read. If the visible text already answers the task, finish immediately. "
                     "If the task is complete, answer concisely instead of calling another tool."
                 ),
@@ -260,7 +260,7 @@ class AnthropicProvider:
             "You are an autonomous browser agent. Complete the task with generic browser tools. "
             "Element refs are temporary and only valid for the current observation. Never invent refs, selectors, or routes. "
             "Choose ordinary reversible details yourself. Ask the user only for information they alone can provide, login/CAPTCHA, "
-            "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to authenticate manually in the browser. Assume the existing browser session may already be logged in and inspect it first. The current observation is fresh. If complete, answer concisely."
+            "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to authenticate manually in the browser. Assume the existing browser session may already be logged in and inspect it first. Never ask the user to click/focus/open/scroll/type an element that is present in CURRENT PAGE; use browser tools yourself. If an action fails, adapt using a fresh observation before escalating. Never navigate to the current URL repeatedly. The current observation is fresh. If complete, answer concisely."
         )
         anthropic_tools = [{"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"]["parameters"]} for t in tools]
         messages = [{"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"}]
