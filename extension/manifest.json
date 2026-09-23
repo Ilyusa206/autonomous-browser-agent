@@ -6,7 +6,7 @@
   "permissions": ["activeTab", "scripting", "tabs"],
   "host_permissions": ["http://127.0.0.1:8766/*"],
   "background": {"service_worker": "background.js"},
-  "action": {"default_title": "Open Browser Agent"},
+  "action": {"default_title": "Open Browser Agent", "default_popup": "popup.html"},
   "content_scripts": [{
     "matches": ["http://*/*", "https://*/*"],
     "js": ["content.js"],
