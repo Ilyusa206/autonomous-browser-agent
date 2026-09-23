@@ -171,3 +171,23 @@ def test_compact_observation_hard_bounds_large_element_header():
     assert compact.startswith("URL: https://example.com")
     assert "VISIBLE TEXT:" in compact
     assert "useful visible evidence" in compact
+
+
+def test_ollama_executor_hard_bounds_observation_context():
+    provider = _provider()
+    response = _ok({"message": {"role": "assistant", "content": "done"}})
+    huge = (
+        "URL: https://example.com\nTITLE: Example\n\nINTERACTIVE ELEMENTS:\n"
+        + ("[e1] name='noise'\n" * 1000)
+        + "\nVISIBLE TEXT:\n"
+        + ("evidence " * 1000)
+    )
+
+    with patch("browser_agent.provider.requests.post", return_value=response) as post:
+        provider.decide(task="Read the page", observation=huge, history=[], tools=[])
+
+    payload = post.call_args.kwargs["json"]
+    user_message = payload["messages"][1]["content"]
+    page = user_message.split("CURRENT PAGE:\n", 1)[1]
+    assert len(page) <= 3600
+    assert "VISIBLE TEXT:" in page
