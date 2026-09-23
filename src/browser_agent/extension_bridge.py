@@ -3,16 +3,16 @@ from __future__ import annotations
 from flask import Flask, jsonify, request
 
 from browser_agent.agent import TOOL_SCHEMAS
-from browser_agent.provider import GroqProvider
+from browser_agent.provider import BrowserLLMProvider, get_provider_from_env
 
 app = Flask(__name__)
-provider: GroqProvider | None = None
+provider: BrowserLLMProvider | None = None
 
 
-def get_provider() -> GroqProvider:
+def get_provider() -> BrowserLLMProvider:
     global provider
     if provider is None:
-        provider = GroqProvider()
+        provider = get_provider_from_env()
     return provider
 
 
