@@ -51,7 +51,7 @@ def test_ollama_plan_uses_native_json_mode_and_disables_thinking():
     assert payload["think"] is False
     assert payload["stream"] is False
     assert payload["format"] == "json"
-    assert payload["options"]["num_predict"] == 180
+    assert payload["options"]["num_predict"] == 320
     assert plan["objective"] == "open page"
 
 
@@ -136,3 +136,22 @@ def test_ollama_timeout_has_local_runtime_error():
             assert "qwen3:14b" in str(exc)
         else:
             raise AssertionError("Expected RuntimeError")
+
+
+def test_ollama_plan_falls_back_when_json_is_truncated():
+    provider = _provider()
+    response = _ok(
+        {
+            "message": {
+                "role": "assistant",
+                "content": '{"objective":"open page","steps":["navigate"],"success_criteria":["page',
+            }
+        }
+    )
+
+    with patch("browser_agent.provider.requests.post", return_value=response):
+        plan = provider.create_plan(task="Open the page", observation="URL: about:blank")
+
+    assert plan["objective"] == "Open the page"
+    assert len(plan["steps"]) == 3
+    assert "final page observation" in plan["success_criteria"][0]
