@@ -5,8 +5,8 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type !== "AGENT_DECIDE") return;
-  fetch("http://127.0.0.1:8766/api/decision", {
+  if (!["AGENT_DECIDE","AGENT_PLAN"].includes(message.type)) return;
+  fetch(message.type === "AGENT_PLAN" ? "http://127.0.0.1:8766/api/plan" : "http://127.0.0.1:8766/api/decision", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(message.payload)
