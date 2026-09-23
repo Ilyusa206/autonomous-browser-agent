@@ -144,7 +144,7 @@ def run_task():
             page = controller.start()
             emit("result", f"Браузер готов: {page.url}")
             result = AutonomousAgent(
-                page, GroqProvider(event_sink=emit), max_steps=12,
+                page, GroqProvider(event_sink=emit), max_steps=24,
                 event_sink=emit, confirm_callback=confirm, ask_user_callback=ask_user,
             ).run(task)
             state["result"] = result.message
