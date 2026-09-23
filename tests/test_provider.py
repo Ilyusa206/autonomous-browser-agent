@@ -19,50 +19,110 @@ def _provider() -> OllamaProvider:
         return OllamaProvider()
 
 
-def test_ollama_request_disables_thinking_and_removes_groq_reasoning_effort():
-    provider = _provider()
+def _ok(payload: dict) -> Mock:
     response = Mock()
+    response.ok = True
     response.status_code = 200
+    response.json.return_value = payload
+    return response
+
+
+def test_ollama_normalizes_openai_style_base_url_to_native_chat():
+    provider = _provider()
+    assert provider.endpoint == "http://10.10.50.158:11434/api/chat"
+
+
+def test_ollama_plan_uses_native_json_mode_and_disables_thinking():
+    provider = _provider()
+    response = _ok(
+        {
+            "message": {
+                "role": "assistant",
+                "content": '{"objective":"open page","steps":["navigate"],"success_criteria":["page loaded"]}',
+            }
+        }
+    )
 
     with patch("browser_agent.provider.requests.post", return_value=response) as post:
-        provider._post_with_rate_limit_retry(
-            headers={"Authorization": "Bearer ollama"},
-            json={
-                "model": "qwen3:14b",
-                "messages": [{"role": "user", "content": "test"}],
-                "reasoning_effort": "low",
+        plan = provider.create_plan(task="Open the page", observation="URL: about:blank")
+
+    payload = post.call_args.kwargs["json"]
+    assert post.call_args.args[0] == "http://10.10.50.158:11434/api/chat"
+    assert payload["think"] is False
+    assert payload["stream"] is False
+    assert payload["format"] == "json"
+    assert payload["options"]["num_predict"] == 350
+    assert plan["objective"] == "open page"
+
+
+def test_ollama_decide_preserves_native_tool_call():
+    provider = _provider()
+    response = _ok(
+        {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "navigate",
+                            "arguments": {"url": "https://example.com"},
+                        }
+                    }
+                ],
+            }
+        }
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "navigate",
+                "description": "Navigate",
+                "parameters": {"type": "object", "properties": {"url": {"type": "string"}}},
             },
-            timeout=90,
+        }
+    ]
+
+    with patch("browser_agent.provider.requests.post", return_value=response) as post:
+        decision = provider.decide(
+            task="Open example.com",
+            observation="URL: about:blank",
+            history=[],
+            tools=tools,
         )
 
     payload = post.call_args.kwargs["json"]
     assert payload["think"] is False
-    assert "reasoning_effort" not in payload
-    assert payload["model"] == "qwen3:14b"
-
-
-def test_ollama_preserves_tool_call_payload():
-    provider = _provider()
-    response = Mock()
-    response.status_code = 200
-    tools = [{"type": "function", "function": {"name": "navigate", "parameters": {"type": "object"}}}]
-
-    with patch("browser_agent.provider.requests.post", return_value=response) as post:
-        provider._post_with_rate_limit_retry(
-            json={
-                "model": "qwen3:14b",
-                "tools": tools,
-                "tool_choice": "auto",
-                "parallel_tool_calls": False,
-            },
-            timeout=90,
-        )
-
-    payload = post.call_args.kwargs["json"]
     assert payload["tools"] == tools
-    assert payload["tool_choice"] == "auto"
-    assert payload["parallel_tool_calls"] is False
+    assert decision.kind == "tool"
+    assert decision.name == "navigate"
+    assert decision.arguments == {"url": "https://example.com"}
+
+
+def test_ollama_verifier_uses_native_json_mode():
+    provider = _provider()
+    response = _ok(
+        {
+            "message": {
+                "role": "assistant",
+                "content": '{"complete":true,"summary":"done","missing":[]}',
+            }
+        }
+    )
+
+    with patch("browser_agent.provider.requests.post", return_value=response) as post:
+        result = provider.verify_goal(
+            task="Read heading",
+            observation="Example Domain",
+            candidate_answer="Example Domain",
+        )
+
+    payload = post.call_args.kwargs["json"]
     assert payload["think"] is False
+    assert payload["format"] == "json"
+    assert result.complete is True
+    assert result.summary == "done"
 
 
 def test_ollama_timeout_has_local_runtime_error():
@@ -70,7 +130,7 @@ def test_ollama_timeout_has_local_runtime_error():
 
     with patch("browser_agent.provider.requests.post", side_effect=requests.ReadTimeout("slow")):
         try:
-            provider._post_with_rate_limit_retry(json={"model": "qwen3:14b"}, timeout=90)
+            provider.create_plan(task="test", observation="test")
         except RuntimeError as exc:
             assert "Local Ollama timed out" in str(exc)
             assert "qwen3:14b" in str(exc)
