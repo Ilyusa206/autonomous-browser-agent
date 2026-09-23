@@ -24,25 +24,33 @@
 ```text
 Пользователь
     │
-    ├── CLI / локальная Control Panel
+    ▼
+Browser Extension mini-app
+    │
+    ├── fresh compact observation
+    ├── bounded action memory / recovery
+    ├── deterministic safety confirmation
     │
     ▼
-AutonomousAgent
+Local Python bridge
     │
-    ├── compact page observation
-    ├── bounded action memory
-    ├── safety / recovery
-    └── LLM provider
-            │
-            ▼
-       generic tools
-            │
-         Playwright
-            │
-     visible Chromium
+    ▼
+LLM provider ── Ollama / Anthropic / OpenAI / Groq
+    │
+    ▼
+generic browser tool call
+    │
+    ▼
+content-script actuator
+    │
+    └──────────► текущая видимая вкладка Chromium/Opera GX
+
+candidate finish ──► verifier ──► final answer / continue
 ```
 
-Browser layer не знает о конкретных сайтах. Модель получает только компактное описание текущей страницы и схемы универсальных инструментов, сама выбирает элемент и следующее действие.
+Основной demo-контур не делает отдельный blocking LLM-вызов для предварительного плана: первый executor decision сразу начинает работу. Verifier вызывается только при попытке завершить задачу. Это сохраняет автономный цикл и уменьшает latency локальных CPU-моделей. Playwright-контур остаётся отдельным reference/fallback adapter.
+
+Browser layer не знает о конкретных сайтах. Модель получает только компактное описание текущей страницы и схемы универсальных инструментов, сама выбирает элемент и следующее действие. Observation имеет жёсткий размерный budget: большой список интерактивных элементов не может вытеснить весь visible-text или бесконтрольно увеличить prompt.
 
 ## Быстрый запуск — Windows PowerShell
 
