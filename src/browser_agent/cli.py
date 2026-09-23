@@ -7,7 +7,7 @@ from pathlib import Path
 from browser_agent.agent import AutonomousAgent
 from browser_agent.browser import BrowserController
 from browser_agent.observation import observe_page
-from browser_agent.provider import GroqProvider
+from browser_agent.provider import BrowserLLMProvider, get_provider_from_env
 from browser_agent.tools import BrowserTools
 
 
