@@ -107,9 +107,24 @@ API-ключи, `.env`, browser profile, auth state и локальные арт
 
 ## LLM и провайдер
 
-Текущий development runtime использует Groq OpenAI-compatible API и модель `openai/gpt-oss-120b`. Provider изолирован от browser/agent слоя, поэтому модель и транспорт можно заменить без переписывания Playwright-инструментов.
+Agent core не привязан к одному LLM transport. Поддерживаются official Anthropic, official OpenAI, Groq development fallback и локальный Ollama через OpenAI-compatible endpoint.
 
-Важно: формулировка исходного тестового задания отдельно требует Claude или OpenAI. Текущий Groq runtime используется для разработки и тестирования; перед финальной сдачей этот пункт должен быть закрыт совместимым финальным provider configuration.
+Для локальной разработки рекомендуется Ollama: модель выполняется на собственной машине/сервере, API-ключ не нужен, нет внешнего rate limit, а browser orchestration остаётся тем же:
+
+```text
+Browser Agent -> BrowserLLMProvider -> Ollama -> local model
+                              \-> Anthropic / OpenAI / Groq
+```
+
+Пример локальной конфигурации:
+
+```text
+BROWSER_AGENT_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+OLLAMA_MODEL=qwen3:8b
+```
+
+Локальный runtime выбран как engineering/development fallback, а не как попытка подменить требование задания. Исходная формулировка требует Claude или OpenAI, поэтому финальная демонстрация должна использовать соответствующий provider, если такой доступ легитимно доступен. Provider abstraction позволяет переключить runtime переменными окружения без изменения browser tools, context engineering, safety или agent loop.
 
 ## Почему не MCP
 
@@ -126,7 +141,8 @@ API-ключи, `.env`, browser profile, auth state и локальные арт
 
 ## Ограничения и следующие шаги
 
-- бесплатный Groq tier может вводить паузы из-за TPM rate limits;
+- локальная модель может быть существенно медленнее облачной без подходящей GPU; качество tool calling зависит от выбранной модели;
+- бесплатный Groq tier может вводить паузы из-за TPM/TPD rate limits;
 - safety-классификатор сейчас консервативный и основан на семантике выбранного элемента;
 - нет полноценного vision/screenshot reasoning;
 - нет sub-agent architecture;
