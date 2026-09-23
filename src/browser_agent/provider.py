@@ -177,6 +177,30 @@ class GroqProvider:
         return ModelDecision(kind="finish", text=(message.get("content") or "").strip())
 
 
+class OllamaProvider(GroqProvider):
+    """Local OpenAI-compatible runtime served by Ollama. No API key or cloud account required."""
+
+    endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+
+    def __init__(self, model: str | None = None, event_sink: Callable[[str, str], None] | None = None) -> None:
+        load_dotenv()
+        self.api_key = "ollama"
+        self.model = model or os.getenv("OLLAMA_MODEL", "qwen3:8b")
+        self.event_sink = event_sink
+        self.endpoint = os.getenv("OLLAMA_BASE_URL", self.endpoint).rstrip("/")
+        if not self.endpoint.endswith("/chat/completions"):
+            self.endpoint += "/chat/completions"
+
+    def _post_with_rate_limit_retry(self, **kwargs):
+        try:
+            return requests.post(self.endpoint, **kwargs)
+        except requests.ConnectionError as exc:
+            raise RuntimeError(
+                "Cannot connect to local Ollama. Start it first and make sure the configured model is pulled."
+            ) from exc
+
+
+
 class OpenAIProvider(GroqProvider):
     """Official OpenAI runtime using the Chat Completions tool-calling contract."""
 
@@ -278,8 +302,10 @@ def get_provider_from_env(event_sink: Callable[[str, str], None] | None = None) 
     name = os.getenv("BROWSER_AGENT_PROVIDER", "groq").strip().lower()
     if name == "openai":
         return OpenAIProvider(event_sink=event_sink)
+    if name in {"ollama", "local"}:
+        return OllamaProvider(event_sink=event_sink)
     if name in {"anthropic", "claude"}:
         return AnthropicProvider(event_sink=event_sink)
     if name == "groq":
         return GroqProvider(model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), event_sink=event_sink)
-    raise RuntimeError(f"Unsupported BROWSER_AGENT_PROVIDER={name!r}; use openai, anthropic, or groq.")
+    raise RuntimeError(f"Unsupported BROWSER_AGENT_PROVIDER={name!r}; use openai, anthropic, ollama, or groq.")
