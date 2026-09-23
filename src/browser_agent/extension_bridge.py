@@ -19,7 +19,7 @@ def get_provider() -> GroqProvider:
 @app.post("/api/decision")
 def decision():
     data = request.get_json(force=True)
-    result = get_provider().decide(
+    p = get_provider()\n    result = p.decide(
         task=str(data.get("task", "")),
         observation=str(data.get("observation", "")),
         history=[{"role": "user", "content": f"LAST ACTION: {data.get('last_action', '(none)')}"}],
@@ -40,7 +40,7 @@ def health():
 
 def main() -> None:
     print("[bridge] Browser Agent extension backend: http://127.0.0.1:8766")
-    print("[bridge] API keys stay here; the Opera extension never receives them.")
+    print("[bridge] Executor + strict goal verifier enabled.")\n    print("[bridge] API keys stay here; the Opera extension never receives them.")
     app.run(host="127.0.0.1", port=8766, debug=False, threaded=True)
 
 
