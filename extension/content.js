@@ -57,14 +57,14 @@
     if(name==="press"){node.focus();node.dispatchEvent(new KeyboardEvent("keydown",{key:a.key,code:a.key,bubbles:true}));node.dispatchEvent(new KeyboardEvent("keyup",{key:a.key,code:a.key,bubbles:true}));await sleep(400);return "Pressed "+a.key;}
     throw new Error("Unknown tool "+name);
   }
-  async function decide(payload){return new Promise((resolve,reject)=>chrome.runtime.sendMessage({type:"AGENT_DECIDE",payload},r=>{if(chrome.runtime.lastError)return reject(new Error(chrome.runtime.lastError.message));if(!r?.ok)return reject(new Error(r?.error||"Bridge unavailable"));resolve(r.data);}));}
+  async function requestAgent(type,payload){return new Promise((resolve,reject)=>chrome.runtime.sendMessage({type,payload},r=>{if(chrome.runtime.lastError)return reject(new Error(chrome.runtime.lastError.message));if(!r?.ok)return reject(new Error(r?.error||"Bridge unavailable"));resolve(r.data);}));}
   async function start(){
     if(running)return; task=shadow.querySelector("#task").value.trim();if(!task)return;running=true;cancelled=false;step=0;shadow.querySelector(".log").innerHTML="";setStatus("Агент работает…");
     let last="(none yet)";
     try{
       while(running&&!cancelled&&step++<maxSteps){
         const o=observe();log(`Шаг ${step}: анализ страницы`);
-        const d=await decide({task,observation:renderObs(o),last_action:last});
+        const d=await decide({task,observation:renderObs(o),last_action:last,plan});\n        if(d.verification&&!d.verification.complete)log("Verifier: не готово — "+(d.verification.missing||[]).join("; "),"warn");
         if(d.kind==="finish"){log(d.text||"Готово","ok");setStatus("Завершено");running=false;return;}
         if(d.name==="ask_user"){const answer=await human(d.arguments?.question||"Нужно действие пользователя");last="USER INPUT: "+(answer||"manual action completed");continue;}
         log("→ "+d.name+" "+JSON.stringify(d.arguments||{}),"tool");
