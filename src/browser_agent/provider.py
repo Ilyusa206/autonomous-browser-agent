@@ -83,7 +83,7 @@ class GroqProvider:
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes. Never plan to request, collect, or type passwords, OTP/2FA codes, API keys, or other secrets. Assume an existing browser session may already be authenticated; inspect it first. If authentication is actually required, plan for the user to complete login manually."},
-            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}"},
+            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 1800)}"},
         ]
         response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
         if not response.ok:
@@ -235,11 +235,20 @@ class OllamaProvider(GroqProvider):
             {
                 "messages": messages,
                 "format": "json",
-                "options": {"num_predict": 180},
+                "options": {"num_predict": 320},
             },
             phase="plan",
         )
-        data = json.loads(payload.get("message", {}).get("content") or "{}")
+        content = payload.get("message", {}).get("content") or ""
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            print("[ollama] plan JSON was truncated/malformed; using a compact fallback plan")
+            return {
+                "objective": task,
+                "steps": ["Inspect the current page", "Take the next browser action from observed evidence", "Verify the requested result"],
+                "success_criteria": ["The requested result is supported by the final page observation"],
+            }
         return {
             "objective": str(data.get("objective", task)),
             "steps": [str(x) for x in data.get("steps", [])][:7],
