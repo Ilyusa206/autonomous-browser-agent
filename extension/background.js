@@ -1,8 +1,15 @@
-chrome.runtime.onInstalled.addListener(()=>{chrome.sidePanel?.setPanelBehavior({openPanelOnActionClick:false}).catch(()=>{});});
+let agentWindowId=null;
+async function openAgentWindow(){
+  if(agentWindowId){
+    try{await chrome.windows.update(agentWindowId,{focused:true});return agentWindowId}catch(_){agentWindowId=null}
+  }
+  const w=await chrome.windows.create({url:chrome.runtime.getURL("agent.html"),type:"popup",width:430,height:720,focused:true});
+  agentWindowId=w.id||null; return agentWindowId;
+}
+chrome.windows.onRemoved.addListener(id=>{if(id===agentWindowId)agentWindowId=null});
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse)=>{
  if(message.type==="OPEN_AGENT"){
-  const windowId=message.windowId;
-  chrome.sidePanel.open({windowId}).then(()=>sendResponse({ok:true})).catch(e=>sendResponse({ok:false,error:String(e)}));
+  openAgentWindow().then(id=>sendResponse({ok:true,windowId:id})).catch(e=>sendResponse({ok:false,error:String(e)}));
   return true;
  }
  if(!["AGENT_DECIDE","AGENT_PLAN"].includes(message.type))return;
