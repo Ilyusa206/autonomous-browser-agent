@@ -130,5 +130,5 @@ API-ключи, `.env`, browser profile, auth state и локальные арт
 - safety-классификатор сейчас консервативный и основан на семантике выбранного элемента;
 - нет полноценного vision/screenshot reasoning;
 - нет sub-agent architecture;
-- финальный Claude/OpenAI runtime ещё нужно подключить;
+- для финального видео нужен действующий Claude/OpenAI API key и end-to-end прогон выбранного runtime;
 - MCP оставлен как дальнейшее развитие; Opera GX Side Panel API недоступен в проверенной среде, поэтому UI использует отдельное persistent mini-app окно.
