@@ -82,8 +82,8 @@ class GroqProvider:
 
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
         messages = [
-            {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes. Never plan to request, collect, or type passwords, OTP/2FA codes, API keys, or other secrets. Assume an existing browser session may already be authenticated; inspect it first. If authentication is actually required, plan for the user to complete login manually."},
-            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 1800)}"},
+            {"role": "system", "content": "Plan a browser task. Return JSON only with objective, steps, success_criteria. Use 2-5 short outcome steps. No selectors, invented routes, credentials, OTPs, API keys, or secrets. Existing sessions may already be authenticated; inspect before assuming login is needed."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 900)}"},
         ]
         response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
         if not response.ok:
@@ -235,7 +235,7 @@ class OllamaProvider(GroqProvider):
             {
                 "messages": messages,
                 "format": "json",
-                "options": {"num_predict": 320},
+                "options": {"num_predict": 220},
             },
             phase="plan",
         )
