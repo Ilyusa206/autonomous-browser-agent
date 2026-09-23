@@ -60,6 +60,28 @@ class GroqProvider:
 
         return response
 
+    def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
+        messages = [
+            {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{observation}"},
+        ]
+        response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
+        if not response.ok:
+            raise RuntimeError(f"Groq planner error {response.status_code}: {response.text[:500]}")
+        data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
+        return {"objective": str(data.get("objective", task)), "steps": [str(x) for x in data.get("steps", [])][:7], "success_criteria": [str(x) for x in data.get("success_criteria", [])][:7]}
+
+    def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
+        messages = [
+            {"role": "system", "content": "You are a strict browser-agent verifier. A success claim is not evidence. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{observation}"},
+        ]
+        response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 300, "reasoning_effort": "low"}, timeout=90)
+        if not response.ok:
+            raise RuntimeError(f"Groq verifier error {response.status_code}: {response.text[:500]}")
+        data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
+        return GoalVerification(bool(data.get("complete")), str(data.get("summary", "")), [str(x) for x in data.get("missing", [])])
+
     def decide(
         self,
         *,
