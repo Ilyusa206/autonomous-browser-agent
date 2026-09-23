@@ -80,18 +80,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "ask_user",
-            "description": "Pause only when progress truly requires user-only information, a manual login/CAPTCHA, consequential confirmation, or an interaction that cannot be performed with available tools. Never ask the user to click/focus an element that is present in the current observation and can be handled by click/type/press. Never request passwords, OTP/2FA codes, API keys, or other secrets.",
-            "parameters": {
-                "type": "object",
-                "properties": {"question": {"type": "string"}},
-                "required": ["question"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "wait",
             "description": "Wait briefly for dynamic page content to update.",
             "parameters": {
