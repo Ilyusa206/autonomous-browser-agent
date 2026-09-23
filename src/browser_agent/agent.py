@@ -13,7 +13,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "navigate",
-            "description": "Navigate the browser to a URL when the URL is known or supplied by the user.",
+            "description": "Navigate the browser to a URL when the current page is unrelated or another site/page is required. Do not repeatedly navigate to the URL already shown in the current observation.",
             "parameters": {
                 "type": "object",
                 "properties": {"url": {"type": "string"}},
@@ -81,7 +81,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "ask_user",
-            "description": "Pause and ask the user for missing information or a manual browser action that is required to continue, such as an address, login, CAPTCHA, permission, or preference. Do not use this for information already visible on the page.",
+            "description": "Pause only when progress truly requires user-only information, a manual login/CAPTCHA, consequential confirmation, or an interaction that cannot be performed with available tools. Never ask the user to click/focus an element that is present in the current observation and can be handled by click/type/press. Never request passwords, OTP/2FA codes, API keys, or other secrets.",
             "parameters": {
                 "type": "object",
                 "properties": {"question": {"type": "string"}},
