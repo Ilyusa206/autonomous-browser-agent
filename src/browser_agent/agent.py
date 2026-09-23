@@ -114,7 +114,7 @@ class AutonomousAgent:
     def __init__(
         self,
         page,
-        provider: GroqProvider,
+        provider: BrowserLLMProvider,
         max_steps: int = 24,
         event_sink: Callable[[str, str], None] | None = None,
         confirm_callback: Callable[[str], bool] | None = None,
