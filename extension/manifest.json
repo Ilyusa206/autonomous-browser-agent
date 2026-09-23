@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Browser Agent",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Autonomous AI agent that operates the browser tab you are already using.",
   "permissions": ["activeTab", "scripting", "tabs", "storage"],
   "host_permissions": ["http://127.0.0.1:8766/*"],
