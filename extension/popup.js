@@ -1,0 +1,2 @@
+const task=document.querySelector("#task"),err=document.querySelector("#err");
+document.querySelector("#run").onclick=async()=>{const value=task.value.trim();if(!value)return;const [tab]=await chrome.tabs.query({active:true,currentWindow:true});if(!tab?.id){err.textContent="Нет активной вкладки";return;}try{await chrome.tabs.sendMessage(tab.id,{type:"START_AGENT",task:value});window.close();}catch(e){err.textContent="На этой странице агент пока недоступен. Откройте обычную веб-страницу или новую вкладку агента.";}};
