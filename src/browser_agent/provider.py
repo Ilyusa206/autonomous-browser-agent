@@ -4,7 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import requests
 from dotenv import load_dotenv
@@ -23,6 +23,26 @@ class GoalVerification:
     complete: bool
     summary: str
     missing: list[str]
+
+
+class BrowserLLMProvider(Protocol):
+    model: str
+
+    def create_plan(self, *, task: str, observation: str) -> dict[str, Any]: ...
+    def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification: ...
+    def decide(self, *, task: str, observation: str, history: list[dict[str, str]], tools: list[dict[str, Any]]) -> ModelDecision: ...
+
+
+def _compact_observation(observation: str, limit: int = 6500) -> str:
+    """Keep URL/title/elements and a bounded visible-text tail to control latency/cost."""
+    if len(observation) <= limit:
+        return observation
+    marker = "\nVISIBLE TEXT:\n"
+    head, sep, text = observation.partition(marker)
+    if not sep:
+        return observation[:limit]
+    remaining = max(limit - len(head) - len(marker), 500)
+    return head + marker + text[:remaining]
 
 
 class GroqProvider:
@@ -63,7 +83,7 @@ class GroqProvider:
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes."},
-            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{observation}"},
+            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}"},
         ]
         response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
         if not response.ok:
@@ -74,7 +94,7 @@ class GroqProvider:
     def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
         messages = [
             {"role": "system", "content": "You are a strict browser-agent verifier. A success claim is not evidence. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
-            {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{observation}"},
+            {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{_compact_observation(observation, 5000)}"},
         ]
         response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 300, "reasoning_effort": "low"}, timeout=90)
         if not response.ok:
@@ -117,7 +137,7 @@ class GroqProvider:
             },
             {
                 "role": "user",
-                "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{observation}",
+                "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}",
             },
         ]
         messages.extend(history)
@@ -155,3 +175,111 @@ class GroqProvider:
             return ModelDecision(kind="tool", name=function["name"], arguments=arguments)
 
         return ModelDecision(kind="finish", text=(message.get("content") or "").strip())
+
+
+class OpenAIProvider(GroqProvider):
+    """Official OpenAI runtime using the Chat Completions tool-calling contract."""
+
+    endpoint = "https://api.openai.com/v1/chat/completions"
+
+    def __init__(self, model: str | None = None, event_sink: Callable[[str, str], None] | None = None) -> None:
+        load_dotenv()
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("OPENAI_API_KEY is missing. Put it in the local .env file.")
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-5-mini")
+        self.event_sink = event_sink
+
+    def _post_with_rate_limit_retry(self, **kwargs):
+        response = requests.post(self.endpoint, **kwargs)
+        return response
+
+    def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
+        messages = [
+            {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}"},
+        ]
+        response = requests.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "max_completion_tokens": 300}, timeout=90)
+        if not response.ok:
+            raise RuntimeError(f"OpenAI planner error {response.status_code}: {response.text[:500]}")
+        data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
+        return {"objective": str(data.get("objective", task)), "steps": [str(x) for x in data.get("steps", [])][:7], "success_criteria": [str(x) for x in data.get("success_criteria", [])][:7]}
+
+    def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
+        messages = [
+            {"role": "system", "content": "You are a strict browser-agent verifier. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
+            {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{_compact_observation(observation, 5000)}"},
+        ]
+        response = requests.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "max_completion_tokens": 250}, timeout=90)
+        if not response.ok:
+            raise RuntimeError(f"OpenAI verifier error {response.status_code}: {response.text[:500]}")
+        data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
+        return GoalVerification(bool(data.get("complete")), str(data.get("summary", "")), [str(x) for x in data.get("missing", [])])
+
+
+class AnthropicProvider:
+    """Official Claude Messages API adapter with native client-side tool use."""
+
+    endpoint = "https://api.anthropic.com/v1/messages"
+
+    def __init__(self, model: str | None = None, event_sink: Callable[[str, str], None] | None = None) -> None:
+        load_dotenv()
+        self.api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is missing. Put it in the local .env file.")
+        self.model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+        self.event_sink = event_sink
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+
+    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        response = requests.post(self.endpoint, headers=self.headers, json=payload, timeout=90)
+        if not response.ok:
+            raise RuntimeError(f"Anthropic API error {response.status_code}: {response.text[:500]}")
+        return response.json()
+
+    def _json(self, system: str, user: str, max_tokens: int) -> dict[str, Any]:
+        payload = self._request({"model": self.model, "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]})
+        text = "".join(x.get("text", "") for x in payload.get("content", []) if x.get("type") == "text").strip()
+        if text.startswith("```"):
+            text = text.strip("`").removeprefix("json").strip()
+        return json.loads(text)
+
+    def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
+        data = self._json("You are a browser-agent planner. Return valid JSON only with objective, steps, success_criteria. Use 3-7 site-agnostic outcome steps. Never invent selectors or routes.", f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}", 350)
+        return {"objective": str(data.get("objective", task)), "steps": [str(x) for x in data.get("steps", [])][:7], "success_criteria": [str(x) for x in data.get("success_criteria", [])][:7]}
+
+    def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
+        data = self._json("You are a strict browser-agent verifier. Return valid JSON only with complete boolean, summary string, missing array. Every requested side effect must be visibly evidenced.", f"TASK:\n{task}\nCANDIDATE:\n{candidate_answer}\nLAST ACTION:\n{history_summary}\nPAGE:\n{_compact_observation(observation, 5000)}", 300)
+        return GoalVerification(bool(data.get("complete")), str(data.get("summary", "")), [str(x) for x in data.get("missing", [])])
+
+    def decide(self, *, task: str, observation: str, history: list[dict[str, str]], tools: list[dict[str, Any]]) -> ModelDecision:
+        system = (
+            "You are an autonomous browser agent. Complete the task with generic browser tools. "
+            "Element refs are temporary and only valid for the current observation. Never invent refs, selectors, or routes. "
+            "Choose ordinary reversible details yourself. Ask the user only for information they alone can provide, login/CAPTCHA, "
+            "or consequential confirmation. The current observation is fresh. If complete, answer concisely."
+        )
+        anthropic_tools = [{"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"]["parameters"]} for t in tools]
+        messages = [{"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"}]
+        messages.extend(history)
+        payload = self._request({"model": self.model, "max_tokens": 450, "system": system, "messages": messages, "tools": anthropic_tools, "tool_choice": {"type": "auto"}})
+        for block in payload.get("content", []):
+            if block.get("type") == "tool_use":
+                return ModelDecision(kind="tool", name=block.get("name"), arguments=block.get("input") or {})
+        text = "".join(x.get("text", "") for x in payload.get("content", []) if x.get("type") == "text").strip()
+        return ModelDecision(kind="finish", text=text)
+
+
+def get_provider_from_env(event_sink: Callable[[str, str], None] | None = None) -> BrowserLLMProvider:
+    load_dotenv()
+    name = os.getenv("BROWSER_AGENT_PROVIDER", "groq").strip().lower()
+    if name == "openai":
+        return OpenAIProvider(event_sink=event_sink)
+    if name in {"anthropic", "claude"}:
+        return AnthropicProvider(event_sink=event_sink)
+    if name == "groq":
+        return GroqProvider(model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), event_sink=event_sink)
+    raise RuntimeError(f"Unsupported BROWSER_AGENT_PROVIDER={name!r}; use openai, anthropic, or groq.")
