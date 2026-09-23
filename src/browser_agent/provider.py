@@ -82,7 +82,7 @@ class GroqProvider:
 
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
         messages = [
-            {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes."},
+            {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes. Never plan to request, collect, or type passwords, OTP/2FA codes, API keys, or other secrets. Assume an existing browser session may already be authenticated; inspect it first. If authentication is actually required, plan for the user to complete login manually."},
             {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}"},
         ]
         response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
@@ -126,10 +126,10 @@ class GroqProvider:
                     "such as which search engine, public website, marketplace, or delivery service to try first. "
                     "Do not ask the user to choose a site or service unless that choice is materially consequential "
                     "or the user explicitly constrained it. If progress requires information only the user can provide "
-                    "(for example delivery address, credentials, or a genuinely necessary preference), or a manual "
+                    "(for example a delivery address or genuinely necessary preference), or a manual "
                     "browser action such as CAPTCHA, login, or browser "
                     "permission, call ask_user with a concise question instead of guessing, repeatedly scrolling, "
-                    "or trying to bypass the challenge. After the user responds, inspect the fresh page and continue. "
+                    "or trying to bypass the challenge. NEVER request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to perform authentication manually in the browser, then continue from a fresh observation. After the user responds, inspect the fresh page and continue. "
                     "The CURRENT PAGE observation is fresh after every browser action, so do not request "
                     "a redundant read. If the visible text already answers the task, finish immediately. "
                     "If the task is complete, answer concisely instead of calling another tool."
@@ -248,7 +248,7 @@ class AnthropicProvider:
         return json.loads(text)
 
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
-        data = self._json("You are a browser-agent planner. Return valid JSON only with objective, steps, success_criteria. Use 3-7 site-agnostic outcome steps. Never invent selectors or routes.", f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}", 350)
+        data = self._json("You are a browser-agent planner. Return valid JSON only with objective, steps, success_criteria. Use 3-7 site-agnostic outcome steps. Never invent selectors or routes. Never request credentials or secrets; assume the browser may already be logged in and inspect first. If login is required, the user performs it manually.", f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}", 350)
         return {"objective": str(data.get("objective", task)), "steps": [str(x) for x in data.get("steps", [])][:7], "success_criteria": [str(x) for x in data.get("success_criteria", [])][:7]}
 
     def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
@@ -260,7 +260,7 @@ class AnthropicProvider:
             "You are an autonomous browser agent. Complete the task with generic browser tools. "
             "Element refs are temporary and only valid for the current observation. Never invent refs, selectors, or routes. "
             "Choose ordinary reversible details yourself. Ask the user only for information they alone can provide, login/CAPTCHA, "
-            "or consequential confirmation. The current observation is fresh. If complete, answer concisely."
+            "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to authenticate manually in the browser. Assume the existing browser session may already be logged in and inspect it first. The current observation is fresh. If complete, answer concisely."
         )
         anthropic_tools = [{"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"]["parameters"]} for t in tools]
         messages = [{"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"}]
