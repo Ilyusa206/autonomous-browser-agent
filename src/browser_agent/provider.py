@@ -18,6 +18,13 @@ class ModelDecision:
     text: str | None = None
 
 
+@dataclass(frozen=True)
+class GoalVerification:
+    complete: bool
+    summary: str
+    missing: list[str]
+
+
 class GroqProvider:
     """Provider adapter for Groq's OpenAI-compatible Chat Completions API."""
 
