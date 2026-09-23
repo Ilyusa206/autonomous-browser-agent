@@ -101,7 +101,8 @@ def health():
             "ok": True,
             "mode": "extension-bridge",
             "architecture": "planner+executor+verifier",
-            "provider": type(get_provider()).__name__,\n            "model": get_provider().model,
+            "provider": type(get_provider()).__name__,
+            "model": get_provider().model,
         }
     )
 
@@ -109,7 +110,8 @@ def health():
 def main() -> None:
     print("[bridge] Browser Agent: http://127.0.0.1:8766")
     print("[bridge] Planner + Executor + Verifier enabled.")
-    p = get_provider()\n    print(f"[bridge] Provider: {type(p).__name__} / {p.model}")
+    p = get_provider()
+    print(f"[bridge] Provider: {type(p).__name__} / {p.model}")
     app.run(host="127.0.0.1", port=8766, debug=False, threaded=True)
 
 
