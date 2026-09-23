@@ -5,7 +5,7 @@ document.querySelector("#run").onclick=async()=>{
  try{
   const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   await chrome.storage.local.set({pendingTask:value,targetTabId:tab?.id||null});
-  const r=await chrome.runtime.sendMessage({type:"OPEN_AGENT"});
+  const w=await chrome.windows.get(tab.windowId);\n  const r=await chrome.runtime.sendMessage({type:"OPEN_AGENT",bounds:{left:w.left,top:w.top,width:w.width,height:w.height}});
   if(!r?.ok)throw Error(r?.error||"Mini-app unavailable");
   window.close();
  }catch(e){err.textContent="Ошибка: "+(e?.message||String(e));}
