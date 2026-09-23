@@ -44,9 +44,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "ref": {"type": "string"},
                     "text": {"type": "string"},
                     "clear": {"type": "boolean"},
+                    "submit": {"type": "boolean", "description": "Press Enter after typing when the task requires submitting/searching."},
                 },
                 "required": ["ref", "text"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "press",
+            "description": "Press a keyboard key on an observed element, useful for Enter, Escape, ArrowDown and dynamic widgets.",
+            "parameters": {"type": "object", "properties": {"ref": {"type": "string"}, "key": {"type": "string"}}, "required": ["ref", "key"]},
         },
     },
     {
@@ -106,7 +115,7 @@ class AutonomousAgent:
         self,
         page,
         provider: GroqProvider,
-        max_steps: int = 12,
+        max_steps: int = 24,
         event_sink: Callable[[str, str], None] | None = None,
         confirm_callback: Callable[[str], bool] | None = None,
         ask_user_callback: Callable[[str], str] | None = None,
@@ -177,6 +186,7 @@ class AutonomousAgent:
         history: list[dict[str, str]] = []
         last_action_summary = "(none yet)"
         consecutive_errors = 0
+        recent_actions: list[str] = []
 
         for step in range(1, self.max_steps + 1):
             page_observation = observe_page(self.page)
@@ -202,7 +212,16 @@ class AutonomousAgent:
 
             assert decision.name is not None
             arguments = decision.arguments or {}
+            action_signature = f"{decision.name} {arguments}"
             self._emit("tool", f"[agent] tool: {decision.name} {arguments}")
+            recent_actions.append(action_signature)
+            recent_actions = recent_actions[-4:]
+            if len(recent_actions) >= 3 and len(set(recent_actions[-3:])) == 1:
+                self._emit("recovery", "[recovery] repeated identical action detected; forcing fresh state before continuing")
+                self.page.wait_for_timeout(700)
+                last_action_summary = "RECOVERY: previous action repeated without progress; inspect fresh page and choose a different action."
+                recent_actions.clear()
+                continue
 
             if decision.name == "ask_user":
                 question = str(arguments.get("question", "")).strip() or "Нужно действие пользователя. Выполните его в браузере и продолжите."
