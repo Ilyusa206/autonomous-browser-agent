@@ -196,11 +196,15 @@ class OllamaProvider(GroqProvider):
                 configured = configured[:-3]
         self.endpoint = configured.rstrip("/") + "/api/chat"
 
-    def _native_request(self, payload: dict[str, Any], *, timeout: int = 90) -> dict[str, Any]:
+    def _native_request(self, payload: dict[str, Any], *, timeout: int = 90, phase: str = "request") -> dict[str, Any]:
         body = dict(payload)
         body["model"] = self.model
         body["stream"] = False
         body["think"] = False
+        started = time.perf_counter()
+        prompt_chars = sum(len(str(m.get("content", ""))) for m in body.get("messages", []))
+        tool_chars = len(json.dumps(body.get("tools", []), ensure_ascii=False))
+        print(f"[ollama] {phase} start model={self.model} prompt_chars={prompt_chars} tool_chars={tool_chars}")
         try:
             response = requests.post(self.endpoint, json=body, timeout=timeout)
         except requests.Timeout as exc:
@@ -212,9 +216,15 @@ class OllamaProvider(GroqProvider):
             raise RuntimeError(
                 "Cannot connect to local Ollama. Start it first and make sure the configured model is pulled."
             ) from exc
+        elapsed = time.perf_counter() - started
         if not response.ok:
             raise RuntimeError(f"Ollama API error {response.status_code}: {response.text[:500]}")
-        return response.json()
+        data = response.json()
+        print(
+            f"[ollama] {phase} done {elapsed:.2f}s "
+            f"prompt_eval={data.get('prompt_eval_count', '?')} eval={data.get('eval_count', '?')}"
+        )
+        return data
 
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
         messages = [
@@ -225,8 +235,9 @@ class OllamaProvider(GroqProvider):
             {
                 "messages": messages,
                 "format": "json",
-                "options": {"num_predict": 350},
-            }
+                "options": {"num_predict": 180},
+            },
+            phase="plan",
         )
         data = json.loads(payload.get("message", {}).get("content") or "{}")
         return {
@@ -244,8 +255,9 @@ class OllamaProvider(GroqProvider):
             {
                 "messages": messages,
                 "format": "json",
-                "options": {"num_predict": 300},
-            }
+                "options": {"num_predict": 160},
+            },
+            phase="verify",
         )
         data = json.loads(payload.get("message", {}).get("content") or "{}")
         return GoalVerification(
@@ -282,8 +294,9 @@ class OllamaProvider(GroqProvider):
             {
                 "messages": messages,
                 "tools": tools,
-                "options": {"num_predict": 450},
-            }
+                "options": {"num_predict": 220},
+            },
+            phase="decision",
         )
         message = payload.get("message") or {}
         tool_calls = message.get("tool_calls") or []
