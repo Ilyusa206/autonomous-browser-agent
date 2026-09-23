@@ -9,7 +9,7 @@ from flask import Flask, jsonify, render_template_string, request
 
 from browser_agent.agent import AutonomousAgent
 from browser_agent.browser import BrowserController
-from browser_agent.provider import GroqProvider
+from browser_agent.provider import BrowserLLMProvider, get_provider_from_env
 
 app = Flask(__name__)
 events: queue.Queue[dict[str, str]] = queue.Queue()
