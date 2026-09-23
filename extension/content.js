@@ -75,5 +75,5 @@
       if(running)setStatus("Достигнут лимит шагов");running=false;
     }catch(e){log("Ошибка: "+e.message,"err");setStatus("Ошибка — backend запущен?");running=false;}
   }
-  chrome.runtime.onMessage.addListener(m=>{if(m.type==="TOGGLE_AGENT")mount();});
+  chrome.runtime.onMessage.addListener(m=>{if(m.type==="TOGGLE_AGENT")mount();if(m.type==="START_AGENT"){mount();shadow.querySelector("#task").value=m.task||"";start();}});
 })();
