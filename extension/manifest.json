@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Browser Agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Autonomous AI agent that operates the browser tab you are already using.",
-  "permissions": ["activeTab", "scripting", "tabs", "storage"],
+  "permissions": ["activeTab", "scripting", "tabs", "storage", "sidePanel"],
   "host_permissions": ["http://127.0.0.1:8766/*"],
   "background": {"service_worker": "background.js"},
+  "side_panel": {"default_path": "agent.html"},
   "action": {"default_title": "Open Browser Agent", "default_popup": "popup.html"},
   "content_scripts": [{
     "matches": ["http://*/*", "https://*/*"],
