@@ -61,6 +61,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "find_text",
+            "description": "Find literal text on the current page and scroll it into view. Use this before wandering to other pages when the task names a specific function, phrase, heading, product, or term that may already exist on the current page.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "scroll",
             "description": "Scroll vertically. Positive values scroll down; negative values scroll up.",
             "parameters": {
