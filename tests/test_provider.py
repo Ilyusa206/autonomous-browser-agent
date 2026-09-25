@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from browser_agent.provider import OllamaProvider, _compact_observation
+from browser_agent.provider import AnthropicProvider, EXECUTOR_PROMPT, OllamaProvider, _compact_observation
 
 
 def _provider() -> OllamaProvider:
@@ -173,6 +173,20 @@ def test_compact_observation_hard_bounds_large_element_header():
     assert "useful visible evidence" in compact
 
 
+def test_compact_observation_preserves_extension_viewport_text() -> None:
+    observation = (
+        "URL: https://example.com\nTITLE: Example\n\nINTERACTIVE ELEMENTS:\n"
+        + ("[e1] name='very long element'\n" * 500)
+        + "\nVIEWPORT TEXT:\n"
+        + ("target viewport evidence " * 500)
+        + "\nPAGE START:\nintro"
+    )
+    compact = _compact_observation(observation, 1200)
+    assert len(compact) <= 1200
+    assert "VIEWPORT TEXT:" in compact
+    assert "target viewport evidence" in compact
+
+
 def test_ollama_executor_hard_bounds_observation_context():
     provider = _provider()
     response = _ok({"message": {"role": "assistant", "content": "done"}})
@@ -191,3 +205,19 @@ def test_ollama_executor_hard_bounds_observation_context():
     page = user_message.split("CURRENT PAGE:\n", 1)[1]
     assert len(page) <= 3600
     assert "VISIBLE TEXT:" in page
+
+
+def test_executor_prompt_distinguishes_locating_from_reading() -> None:
+    assert "find_text only locates text" in EXECUTOR_PROMPT
+    assert "read_page reads it and stores grounded evidence" in EXECUTOR_PROMPT
+    assert "Do not repeat a no-progress action" in EXECUTOR_PROMPT
+
+
+def test_anthropic_requires_explicit_model_id() -> None:
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key", "ANTHROPIC_MODEL": ""}, clear=False):
+        try:
+            AnthropicProvider()
+        except RuntimeError as exc:
+            assert "ANTHROPIC_MODEL is missing" in str(exc)
+        else:
+            raise AssertionError("Expected explicit ANTHROPIC_MODEL requirement")

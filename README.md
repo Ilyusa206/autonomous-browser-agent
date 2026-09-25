@@ -1,58 +1,97 @@
-# Автономный браузерный AI-агент
+# Autonomous Browser Agent
 
-Тестовое задание: универсальный AI-агент, который получает текстовую задачу и автономно управляет браузером. Основной demo-контур — расширение для Chromium-совместимого браузера с persistent mini-app и управлением текущей пользовательской вкладкой; Playwright-контур сохранён как отдельный reference/fallback adapter.
+Тестовое задание AI Developer: site-agnostic агент, который получает одну сложную задачу, управляет текущей вкладкой Chromium/Opera, накапливает найденные факты и завершает работу только после проверки результата.
 
-> Репозиторий и интерфейс намеренно оформлены на русском языке. Имена Python-модулей, API и технических сущностей оставлены на английском как стандарт разработки.
+Основной runtime — browser extension + локальный Python bridge. Он работает в уже открытой пользовательской сессии браузера, поэтому cookies и авторизация не переносятся в отдельный automation-профиль. Playwright CLI/UI сохранены как reference adapter и используют отдельный persistent profile.
 
-## Что уже работает
+## Что реализовано
 
-- видимый Chromium в headed-режиме;
-- постоянный локальный профиль: cookies и ручная авторизация сохраняются между запусками;
-- автономный цикл «наблюдение → решение модели → действие → новое наблюдение»;
-- универсальные инструменты `navigate`, `click`, `type`, `scroll`, `back`, `wait`;
-- никаких селекторов и маршрутов, зашитых под конкретные сайты;
-- компактное наблюдение вместо отправки модели полного HTML/DOM;
-- временные ссылки на элементы вида `e1`, `e2`, которые пересоздаются после изменения страницы;
-- ограниченная память: текущая страница + краткий результат последнего действия вместо накопления всех страниц;
-- восстановление после ошибок browser action;
-- повтор запросов при временном rate limit LLM-провайдера;
-- safety gate: потенциально необратимые действия требуют подтверждения пользователя;
-- CLI и локальная web-панель с live timeline.
+- автономный цикл `observe → decide → act/read → update state → verify`;
+- generic browser tools без selectors, URL или сценариев под конкретные сайты;
+- bounded agent state между всеми шагами;
+- `read_page`, который извлекает ограниченный смысловой фрагмент и сохраняет его как evidence;
+- различие между `find_text` (найти/прокрутить) и `read_page` (прочитать/запомнить);
+- completion verifier, который получает текущую страницу и накопленное состояние;
+- progress detection по fingerprint страницы и появлению нового evidence;
+- память неудачных стратегий, stale-ref recovery и явная остановка no-progress loop;
+- временные DOM refs, SPA/dynamic controls, contenteditable, keyboard actions и open shadow DOM;
+- повторное подключение content script после полной навигации/BFCache;
+- deterministic safety gate для удаления, оплаты, заказа, перевода и отправки данных/отклика;
+- OpenAI, Anthropic, Ollama и Groq providers;
+- telemetry по provider/model, фазе, duration и размерам prompt/tools;
+- mini-app с текущим подэтапом, timeline, evidence, recovery и финальным ответом.
 
 ## Архитектура
 
 ```text
-Пользователь
-    │
-    ▼
-Browser Extension mini-app
-    │
-    ├── fresh compact observation
-    ├── bounded action memory / recovery
-    ├── deterministic safety confirmation
-    │
-    ▼
-Local Python bridge
-    │
-    ▼
-LLM provider ── Ollama / Anthropic / OpenAI / Groq
-    │
-    ▼
-generic browser tool call
-    │
-    ▼
-content-script actuator
-    │
-    └──────────► текущая видимая вкладка Chromium/Opera GX
-
-candidate finish ──► verifier ──► final answer / continue
+User task
+   ↓
+Extension mini-app ── current authenticated browser tab
+   ↓                         ↑
+compact observation     generic actuator
+   ↓                         ↑
+Python bridge → bounded AgentState → LLM decision
+                    │              │
+                    ├─ evidence    ├─ browser action
+                    ├─ pages       ├─ read_page
+                    ├─ actions     ├─ ask_user
+                    ├─ failures    └─ candidate finish
+                    └─ remaining             ↓
+                                      evidence-aware verifier
 ```
 
-Основной demo-контур не делает отдельный blocking LLM-вызов для предварительного плана: первый executor decision сразу начинает работу. Verifier вызывается только при попытке завершить задачу. Это сохраняет автономный цикл и уменьшает latency локальных CPU-моделей. Playwright-контур остаётся отдельным reference/fallback adapter.
+`extension/content.js` наблюдает и изменяет страницу. `extension/agent.js` управляет жизненным циклом задачи. `extension_bridge.py` восстанавливает присланный state, применяет результат предыдущего browser action и вызывает provider. Один HTTP-вызов не обязан помнить предыдущий: сериализованный bounded state возвращается mini-app и передаётся в следующий вызов.
 
-Browser layer не знает о конкретных сайтах. Модель получает только компактное описание текущей страницы и схемы универсальных инструментов, сама выбирает элемент и следующее действие. Observation имеет жёсткий размерный budget: большой список интерактивных элементов не может вытеснить весь visible-text или бесконтрольно увеличить prompt.
+### Agent state
 
-## Быстрый запуск — Windows PowerShell
+`src/browser_agent/state.py` хранит:
+
+- `objective` и `current_subgoal`;
+- завершённые подэтапы и `remaining_work`;
+- evidence: URL, title, query и извлечённый content;
+- посещённые страницы/fingerprints;
+- последние actions и факт реального прогресса;
+- failures и verifier feedback;
+- счётчики no-progress и отклонённых завершений.
+
+Память жёстко ограничена: до 12 evidence по 1800 символов, 10 последних actions, 12 состояний страниц, 8 failures и 5 verifier feedback. Evidence дедуплицируется по источнику и content hash. Полный DOM и бесконечная message history модели не отправляются.
+
+### Observation и refs
+
+Наблюдение содержит URL/title, до 48 наиболее релевантных interactive elements, текст текущего viewport и ограниченное начало страницы. Password input values маскируются. Временные refs (`e1`, `e2`...) пересоздаются при каждом наблюдении, поэтому stale ref становится recoverable tool failure, а не скрытым кликом по другому элементу.
+
+Поддерживаются links, buttons, inputs, textareas, selects, role-based controls, contenteditable, tabindex controls и open shadow roots. После смены документа controller ждёт и при необходимости повторно внедряет actuator.
+
+### Read / extract / evidence
+
+`find_text` только находит literal text и прокручивает его в viewport. `read_page` извлекает bounded semantic blocks (`heading`, `p`, `li`, `dt/dd`, `pre/code`, `blockquote`, `article`) с фокусом на optional `query` или observed `ref`.
+
+Результат имеет структуру:
+
+```json
+{
+  "source_url": "https://example.test/docs",
+  "title": "Documentation",
+  "query": "target function",
+  "content": "bounded extracted text"
+}
+```
+
+Bridge добавляет результат в state. Следующий executor decision и verifier видят evidence даже после перехода на другую страницу.
+
+### Progress, recovery и completion
+
+Успешный tool call сам по себе не считается прогрессом. Прогресс — это изменение fingerprint страницы или новое evidence. Повтор одинакового action без прогресса остаётся в ledger и превращается в явную recovery directive для reasoning layer. После шести бесполезных итераций агент останавливается с диагностикой.
+
+`finish` — только кандидат. Verifier проверяет исходную задачу против current page и полного AgentState. Его missing items записываются в `remaining_work` и влияют на следующий decision. После трёх отклонённых попыток завершения агент останавливается, а не попадает в `finish → reject → finish` loop.
+
+### Safety и ручное вмешательство
+
+Без отдельного подтверждения блокируются опасные clicks, Enter/Space submission и `type(..., submit=true)`, если surrounding form/dialog/section содержит признаки удаления, оплаты, покупки, перевода, отправки заявки/отклика и других consequential actions.
+
+Агент должен самостоятельно дойти до этой границы. Login/CAPTCHA выполняются пользователем вручную в целевой вкладке. Агент не просит пароль, OTP/2FA или API key. После ручного продолжения он получает fresh observation.
+
+## Установка — Windows PowerShell
 
 ```powershell
 git clone https://github.com/Ilyusa206/autonomous-browser-agent.git
@@ -63,29 +102,12 @@ py -3.11 -m venv .venv
 python -m pip install -U pip
 python -m pip install -e .
 python -m playwright install chromium
+Copy-Item .env.example .env
 ```
 
-Создайте локальный `.env`:
+### Конфигурация provider
 
-```text
-GROQ_API_KEY=your_key_here
-```
-
-Файл `.env` и профиль браузера исключены из Git.
-
-### Основной demo-контур: расширение + bridge
-
-1. Откройте `opera://extensions` (или `chrome://extensions`), включите режим разработчика и загрузите каталог `extension/` как unpacked extension.
-2. Настройте провайдера в локальном `.env` или переменными окружения.
-3. Запустите bridge:
-
-```powershell
-browser-agent-bridge
-```
-
-4. Откройте обычную HTTP/HTTPS-вкладку, нажмите иконку **Browser Agent**, введите одну многошаговую задачу и нажмите **«Запустить»**. Mini-app остаётся отдельным окном, а агент автономно наблюдает текущую вкладку, вызывает generic tools и показывает timeline.
-
-Для локального Ollama, например:
+Локальная разработка через Ollama:
 
 ```text
 BROWSER_AGENT_PROVIDER=ollama
@@ -93,88 +115,89 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
 OLLAMA_MODEL=qwen3:8b
 ```
 
-Для буквального соответствия исходному требованию задания выберите официальный `openai` или `anthropic` provider и задайте соответствующий API key/model через environment. Секреты в репозиторий не коммитятся.
+Официальный OpenAI runtime:
 
-### Визуальная панель
+```text
+BROWSER_AGENT_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=<official model id available to the account>
+```
+
+Официальный Anthropic runtime:
+
+```text
+BROWSER_AGENT_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=<official model id available to the account>
+```
+
+Anthropic model ID намеренно не зашит: доступные модели зависят от аккаунта и меняются. Groq остаётся development fallback через `GROQ_API_KEY`/`GROQ_MODEL`. Секреты, `.env`, cookies и browser profiles исключены из Git.
+
+## Основной запуск: extension + bridge
+
+1. Откройте `opera://extensions` или `chrome://extensions`.
+2. Включите режим разработчика и загрузите каталог `extension/` как unpacked extension.
+3. Запустите bridge:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+browser-agent-bridge
+```
+
+4. Откройте обычную HTTP/HTTPS-вкладку и нажмите иконку **Browser Agent**.
+5. Введите задачу целиком и нажмите **Запустить**.
+
+Health check bridge:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8766/health
+```
+
+### Playwright reference adapter
+
+```powershell
+browser-agent --url https://www.python.org --task "Открой документацию по asyncio.run(), прочитай нужный раздел и кратко объясни по-русски назначение функции." --max-steps 20
+```
 
 ```powershell
 browser-agent-ui
 ```
 
-Панель откроется локально на `http://127.0.0.1:8765`. Введите стартовый URL и задачу, затем нажмите **«Запустить»**. Управляемый Chromium откроется отдельно, а действия агента будут отображаться в панели.
+Playwright adapter использует `.browser-profile`; extension path использует текущую пользовательскую сессию браузера.
 
-### CLI
-
-```powershell
-browser-agent --url https://www.python.org --task "Найди документацию Python по asyncio и кратко объясни, для чего используется asyncio." --max-steps 12
-```
-
-## Управление контекстом
-
-Агент не отправляет модели полную веб-страницу. Observation содержит URL, title, ограниченный visible text и ограниченный список видимых интерактивных элементов. После каждого browser action создаётся новое observation.
-
-Предыдущие страницы не накапливаются в prompt. Модель получает текущую страницу и компактное резюме только последнего действия. Это ограничивает рост контекста и уменьшает расход токенов на длинных сценариях.
-
-## Надёжность
-
-Browser action возвращает структурированный результат `ok/message/observation`. После ошибки агент получает свежее состояние страницы и может выбрать другой ход. После трёх последовательных browser errors выполнение останавливается.
-
-Для воспроизводимой демонстрации recovery предусмотрен opt-in debug hook:
+## Проверки
 
 ```powershell
-$env:BROWSER_AGENT_DEBUG_FAIL_ONCE="1"
-browser-agent --url https://example.com --task "Узнай, какая организация поддерживает example domains." --max-steps 8
-Remove-Item Env:BROWSER_AGENT_DEBUG_FAIL_ONCE
+python -m pytest -q
+node --check extension/background.js
+node --check extension/popup.js
+node --check extension/agent.js
+node --check extension/content.js
+python -m json.tool extension/manifest.json | Out-Null
 ```
 
-В обычном режиме hook полностью выключен.
+Автоматизированные tests покрывают state/evidence accumulation, budgets, deduplication, read result contract, stale refs, recovery, verifier feedback, bridge state round-trip, safety и provider contracts. CI выполняет тот же Python/JavaScript/manifest validation.
 
-## Безопасность
+После любых изменений reasoning/tool layer публичные browser E2E должны быть перепроверены вручную, прежде чем отмечать их PASS. Рекомендуемый acceptance set:
 
-Перед потенциально необратимым действием — например удалением, оплатой, покупкой или переводом — deterministic safety layer останавливает выполнение и требует явного подтверждения. Решение LLM само по себе не является разрешением на такое действие.
+1. Python docs: найти, прочитать и по-русски объяснить `asyncio.run()`.
+2. Незнакомый публичный docs-сайт: несколько действий, targeted read, grounded final answer.
+3. Локальная dynamic fixture: input → transition → read result → verified finish.
+4. Stale/transient failure: fresh observation → другая стратегия → completion.
+5. Локальная destructive fixture: дойти до опасного action и остановиться до подтверждения.
 
-API-ключи, `.env`, browser profile, auth state и локальные артефакты не должны попадать в Git.
-
-## LLM и провайдер
-
-Agent core не привязан к одному LLM transport. Поддерживаются official Anthropic, official OpenAI, Groq development fallback и локальный Ollama через OpenAI-compatible endpoint.
-
-Для локальной разработки рекомендуется Ollama: модель выполняется на собственной машине/сервере, API-ключ не нужен, нет внешнего rate limit, а browser orchestration остаётся тем же:
-
-```text
-Browser Agent -> BrowserLLMProvider -> Ollama -> local model
-                              \-> Anthropic / OpenAI / Groq
-```
-
-Пример локальной конфигурации:
-
-```text
-BROWSER_AGENT_PROVIDER=ollama
-OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
-OLLAMA_MODEL=qwen3:8b
-```
-
-Локальный runtime выбран как engineering/development fallback, а не как попытка подменить требование задания. Исходная формулировка требует Claude или OpenAI, поэтому финальная демонстрация должна использовать соответствующий provider, если такой доступ легитимно доступен. Provider abstraction позволяет переключить runtime переменными окружения без изменения browser tools, context engineering, safety или agent loop.
+Нельзя использовать реальные удаления писем, заказы, платежи или отклики как acceptance test.
 
 ## Почему не MCP
 
-Для однодневного прототипа browser tools реализованы как прямые typed Python tools: это уменьшает integration surface и позволяет проверить сам автономный цикл. Граница между агентом и инструментами уже выделена, поэтому их можно вынести за MCP transport позднее без изменения логики наблюдения и принятия решений.
+Tools остаются typed in-process/browser-extension capabilities. Это сохраняет минимальный integration surface и позволяет проверять state/evidence/recovery независимо от transport. Граница tool schemas уже отделена; вынесение её в MCP не меняет core reasoning architecture и не требуется для текущего задания.
 
-Основной demo-контур теперь реализован как browser extension + локальный Python bridge. Agent mini-app живёт отдельно от DOM управляемой страницы, поэтому полная навигация не должна уничтожать задачу. Content script отвечает только за observation/action. Side Panel API намеренно не используется: Opera GX в проверенной среде не предоставляет `chrome.sidePanel`; вместо него используется extension popup-window.
+## Ограничения
 
-## Проверенные сценарии
-
-1. Example Domain: агент самостоятельно перешёл на IANA и определил организацию, поддерживающую example domains.
-2. Python.org: агент прошёл от главной страницы к документации, выполнил поиск `asyncio`, открыл документацию и сформулировал ответ.
-3. Recovery: первое browser action было детерминированно сломано debug hook; агент получил fresh observation, повторно принял решение и завершил задачу.
-4. Safety: на локальной странице действие `Delete account` было остановлено до клика, запрошено подтверждение и отменено пользователем.
-
-## Ограничения и следующие шаги
-
-- локальная модель может быть существенно медленнее облачной без подходящей GPU; качество tool calling зависит от выбранной модели;
-- бесплатный Groq tier может вводить паузы из-за TPM/TPD rate limits;
-- safety-классификатор сейчас консервативный и основан на семантике выбранного элемента;
-- нет полноценного vision/screenshot reasoning;
-- нет sub-agent architecture;
-- для финального видео нужен действующий Claude/OpenAI API key и end-to-end прогон выбранного runtime;
-- MCP оставлен как дальнейшее развитие; Opera GX Side Panel API недоступен в проверенной среде, поэтому UI использует отдельное persistent mini-app окно.
+- качество автономных решений зависит от выбранной модели; CPU-only `qwen3:8b` может быть медленным и слабее official OpenAI/Anthropic runtime;
+- нет screenshot/vision reasoning и closed-shadow-DOM access;
+- safety classifier консервативный и может запросить лишнее подтверждение;
+- браузер запрещает content scripts на внутренних `chrome://`/`opera://` страницах;
+- CAPTCHA и login требуют ручного действия;
+- agent не выполняет финальный платёж, покупку, удаление или отправку без подтверждения;
+- extension E2E необходимо запускать в реальном Chromium/Opera окружении; unit/integration green не заменяет этот прогон.
