@@ -70,5 +70,26 @@ def test_bridge_blocks_third_stalled_read_action_family() -> None:
     response = client.post("/api/decision", json={"task": "Explain target", "observation": observation, "state": state}).get_json()
     assert response["kind"] == "retry"
     assert "different action family" in response["text"]
-    assert response["state"]["no_progress_count"] == 3
+    assert response["state"]["no_progress_count"] == 2
+    extension_bridge.provider = None
+
+
+def test_blocked_model_retry_does_not_trigger_global_no_progress_stop() -> None:
+    extension_bridge.provider = StubbornReadProvider()
+    client = extension_bridge.app.test_client()
+    observation = "URL: https://example.test\nTITLE: Example\n\nVIEWPORT TEXT:\nsame target"
+    state = {
+        "objective": "Explain target",
+        "recent_actions": [
+            {"tool": "read_page", "arguments": {"query": "same target"}, "ok": True, "message": "read", "progress": False},
+            {"tool": "read_page", "arguments": {"query": "same target"}, "ok": True, "message": "read", "progress": False},
+        ],
+        "no_progress_count": 5,
+    }
+    first = client.post("/api/decision", json={"task": "Explain target", "observation": observation, "state": state}).get_json()
+    assert first["kind"] == "retry"
+    assert first["state"]["no_progress_count"] == 5
+    second = client.post("/api/decision", json={"task": "Explain target", "observation": observation, "state": first["state"]}).get_json()
+    assert second["kind"] == "retry"
+    assert second["state"]["no_progress_count"] == 5
     extension_bridge.provider = None

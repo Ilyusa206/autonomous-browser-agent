@@ -76,7 +76,6 @@ def decision():
     if result.kind == "tool" and result.name == "read_page":
         stalled_reads = [a for a in state.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
         if len(stalled_reads) >= 2:
-            state.no_progress_count += 1
             state.current_subgoal = (
                 "Extraction is stalled. Do not read this page again; use observed navigation/links, "
                 "navigate to a better source supported by the UI, or finish from existing evidence."
@@ -86,7 +85,7 @@ def decision():
                     "kind": "retry",
                     "name": None,
                     "arguments": {},
-                    "text": "Repeated read_page blocked by controller; choose a different action family.",
+                    "text": "Repeated read_page blocked by controller. This retry does not consume the browser no-progress budget; choose a different action family.",
                     "verification": None,
                     "state": state.to_dict(),
                 }
