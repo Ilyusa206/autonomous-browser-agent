@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default="about:blank")
     parser.add_argument("--profile", type=Path, default=Path(".browser-profile"))
     parser.add_argument("--observe", action="store_true")
-    parser.add_argument("--tool", choices=["read", "click", "type", "scroll", "back", "wait", "navigate"])
+    parser.add_argument("--tool", choices=["read_page", "find_text", "click", "type", "press", "scroll", "back", "wait", "navigate"])
     parser.add_argument("--args", default="{}")
     parser.add_argument("--ref")
     parser.add_argument("--text")

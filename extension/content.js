@@ -1,20 +1,283 @@
-(()=>{if(window.__browserAgentActuator)return;window.__browserAgentActuator=true;
-const REF="data-browser-agent-ref",sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const BASE='a,button,input,textarea,select,[role="button"],[role="link"],[role="menuitem"],[role="option"],[role="tab"],[role="checkbox"],[role="radio"],[role="textbox"],[role="searchbox"],[contenteditable="true"],[tabindex]';
-function visible(e){if(!(e instanceof Element))return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return s.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity||1)!==0&&r.width>1&&r.height>1}
-function inViewport(e){if(!visible(e))return false;const r=e.getBoundingClientRect();return r.bottom>=0&&r.top<=innerHeight&&r.right>=0&&r.left<=innerWidth}
-function roots(){const out=[document],q=[document.documentElement];while(q.length){const n=q.shift();if(!n)continue;if(n.shadowRoot){out.push(n.shadowRoot);q.push(...n.shadowRoot.querySelectorAll("*"))}q.push(...n.children)}return out}
-function allCandidates(){const set=new Set();for(const root of roots())for(const e of root.querySelectorAll(BASE))if(visible(e))set.add(e);return [...set]}
-function label(e){const id=e.id,lab=id?document.querySelector(`label[for="${CSS.escape(id)}"]`):null;return[e.getAttribute("aria-label"),e.getAttribute("aria-labelledby")&&document.getElementById(e.getAttribute("aria-labelledby"))?.innerText,e.getAttribute("placeholder"),e.getAttribute("title"),e.getAttribute("name"),lab?.innerText,e.innerText,e.value].filter(Boolean).join(" ").replace(/\s+/g," ").trim()}
-function observe(){document.querySelectorAll("["+REF+"]").forEach(e=>e.removeAttribute(REF));const candidates=allCandidates();const es=candidates.sort((a,b)=>{const ar=a.getBoundingClientRect(),br=b.getBoundingClientRect(),av=ar.bottom>=0&&ar.top<=innerHeight?0:1,bv=br.bottom>=0&&br.top<=innerHeight?0:1;return av-bv||Math.abs(ar.top-innerHeight/2)-Math.abs(br.top-innerHeight/2)}).slice(0,32);
-const elements=es.map((e,i)=>{const ref="e"+(i+1);e.setAttribute(REF,ref);const r=e.getBoundingClientRect();return{ref,tag:e.tagName.toLowerCase(),role:e.getAttribute("role")||"",type:e.getAttribute("type")||"",text:(e.innerText||e.value||"").replace(/\s+/g," ").trim().slice(0,100),name:label(e).slice(0,120),placeholder:(e.getAttribute("placeholder")||"").slice(0,100),href:e.tagName==="A"?(e.href||"").slice(0,140):"",editable:e.isContentEditable||["INPUT","TEXTAREA"].includes(e.tagName),viewport:r.bottom>=0&&r.top<=innerHeight}});
-const viewportText=[...document.querySelectorAll("h1,h2,h3,p,pre,code,dt,dd,li")].filter(inViewport).map(e=>(e.innerText||e.textContent||"").replace(/\s+/g," ").trim()).filter(Boolean).join(" ").slice(0,1200);const pageText=(document.body?.innerText||"").replace(/\s+/g," ").trim().slice(0,900);return["URL: "+location.href,"TITLE: "+document.title,"","INTERACTIVE ELEMENTS:",...elements.map(e=>`[${e.ref}] ${Object.entries(e).filter(([k,v])=>k!=="ref"&&v!==""&&v!==false).map(([k,v])=>k+"="+JSON.stringify(v)).join(" | ")}`),"","VIEWPORT TEXT:",viewportText,"","VISIBLE TEXT:",pageText].join("\n")}
-function findRef(root,ref){if(root.querySelector){const e=root.querySelector(`[${REF}="${CSS.escape(ref)}"]`);if(e)return e;for(const n of root.querySelectorAll("*"))if(n.shadowRoot){const x=findRef(n.shadowRoot,ref);if(x)return x}}return null}
-function el(ref){const e=findRef(document,ref);if(!e)throw Error("Stale/missing ref "+ref);return e}
-function risky(e){const t=[e.innerText,e.value,e.getAttribute("aria-label"),e.href].filter(Boolean).join(" ").toLowerCase();return["delete","remove","pay","purchase","buy now","place order","send money","удалить","оплатить","купить","оформить заказ","перевести"].some(x=>t.includes(x))}
-function nativeSet(e,text){if("value"in e){const proto=e instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:e instanceof HTMLInputElement?HTMLInputElement.prototype:null,setter=proto&&Object.getOwnPropertyDescriptor(proto,"value")?.set;if(setter)setter.call(e,text);else e.value=text}else if(e.isContentEditable)e.textContent=text;else throw Error("Element is not editable")}
-async function act(n,a){if(n==="navigate"||n==="back")throw Error("Navigation is handled by the extension controller");if(n==="find_text"){const q=String(a.text||"").trim().toLowerCase();if(!q)throw Error("find_text requires text");const nodes=[...document.querySelectorAll("h1,h2,h3,h4,p,pre,code,dt,dd,li,a,span")];const hit=nodes.find(e=>visible(e)&&(e.innerText||e.textContent||"").toLowerCase().includes(q));if(!hit)return"Text not found: "+a.text;hit.scrollIntoView({block:"center"});await sleep(350);return"Found and scrolled to text: "+a.text}if(n==="scroll"){scrollBy({top:a.amount||700,behavior:"smooth"});await sleep(450);return"Scrolled"}if(n==="wait"){await sleep(Math.min(Math.max(a.milliseconds||1000,100),5000));return"Waited"}const e=el(a.ref);
-if(n==="click"){if(risky(e)&&!a.confirmed)return{blocked:true,message:"Confirmation required: "+(e.innerText||e.value||a.ref)};e.scrollIntoView({block:"center"});e.focus({preventScroll:true});e.click();await sleep(500);return"Clicked "+a.ref}
-if(n==="type"){e.scrollIntoView({block:"center"});e.focus({preventScroll:true});if(a.clear!==false){if(e.isContentEditable){e.textContent=""}else nativeSet(e,"")}nativeSet(e,a.text);try{e.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:a.text}))}catch(_){e.dispatchEvent(new Event("input",{bubbles:true}))}e.dispatchEvent(new Event("change",{bubbles:true}));if(a.submit){for(const type of ["keydown","keypress","keyup"])e.dispatchEvent(new KeyboardEvent(type,{key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true,cancelable:true}));if(e.form&&typeof e.form.requestSubmit==="function")e.form.requestSubmit()}await sleep(500);return"Typed "+a.ref}
-if(n==="press"){e.focus({preventScroll:true});for(const type of ["keydown","keypress","keyup"])e.dispatchEvent(new KeyboardEvent(type,{key:a.key,code:a.key,bubbles:true,cancelable:true}));return"Pressed "+a.key}throw Error("Unknown tool "+n)}
-chrome.runtime.onMessage.addListener((m,_s,reply)=>{if(m.type==="OBSERVE"){try{reply({ok:true,observation:observe()})}catch(e){reply({ok:false,message:e.message})}return}if(m.type==="ACT"){act(m.name,m.args||{}).then(x=>reply(typeof x==="object"?{ok:false,...x}:{ok:true,message:x})).catch(e=>reply({ok:false,message:e.message}));return true}})})();
+(() => {
+  if (window.__browserAgentActuator) return;
+  window.__browserAgentActuator = true;
+
+  const REF = "data-browser-agent-ref";
+  const BASE = [
+    "a", "button", "input", "textarea", "select", "summary",
+    '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="option"]',
+    '[role="tab"]', '[role="checkbox"]', '[role="radio"]', '[role="textbox"]',
+    '[role="searchbox"]', '[contenteditable="true"]', "[tabindex]"
+  ].join(",");
+  const SEMANTIC = "h1,h2,h3,h4,p,li,dt,dd,pre,code,blockquote,article";
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const clean = value => String(value || "").replace(/\s+/g, " ").trim();
+
+  function visible(element) {
+    if (!(element instanceof Element)) return false;
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden"
+      && Number(style.opacity || 1) !== 0 && rect.width > 1 && rect.height > 1;
+  }
+
+  function inViewport(element) {
+    if (!visible(element)) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.bottom >= 0 && rect.top <= innerHeight && rect.right >= 0 && rect.left <= innerWidth;
+  }
+
+  function roots() {
+    const output = [document];
+    const queue = [document.documentElement];
+    const seen = new Set(queue);
+    while (queue.length) {
+      const node = queue.shift();
+      if (!node) continue;
+      if (node.shadowRoot) output.push(node.shadowRoot);
+      for (const child of node.children || []) {
+        if (!seen.has(child)) { seen.add(child); queue.push(child); }
+      }
+      if (node.shadowRoot) {
+        for (const child of node.shadowRoot.children || []) {
+          if (!seen.has(child)) { seen.add(child); queue.push(child); }
+        }
+      }
+    }
+    return output;
+  }
+
+  function allCandidates() {
+    const output = new Set();
+    for (const root of roots()) {
+      for (const element of root.querySelectorAll(BASE)) if (visible(element)) output.add(element);
+    }
+    return [...output];
+  }
+
+  function label(element) {
+    const id = element.id;
+    const explicitLabel = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+    const labelledBy = element.getAttribute("aria-labelledby");
+    return clean([
+      element.getAttribute("aria-label"),
+      labelledBy && document.getElementById(labelledBy)?.innerText,
+      element.getAttribute("placeholder"), element.getAttribute("title"),
+      element.getAttribute("name"), explicitLabel?.innerText, element.innerText,
+      element.getAttribute("type") === "password" ? "" : element.value
+    ].filter(Boolean).join(" "));
+  }
+
+  function clearRefs() {
+    for (const root of roots()) for (const element of root.querySelectorAll(`[${REF}]`)) element.removeAttribute(REF);
+  }
+
+  function observedElements() {
+    clearRefs();
+    const candidates = allCandidates().sort((a, b) => {
+      const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+      const av = inViewport(a) ? 0 : 1, bv = inViewport(b) ? 0 : 1;
+      return av - bv || Math.abs(ar.top - innerHeight / 2) - Math.abs(br.top - innerHeight / 2);
+    }).slice(0, 48);
+    return candidates.map((element, index) => {
+      const ref = `e${index + 1}`;
+      element.setAttribute(REF, ref);
+      return {
+        ref,
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute("role") || "",
+        type: element.getAttribute("type") || "",
+        text: element.getAttribute("type") === "password" ? "" : clean(element.innerText || element.value).slice(0, 120),
+        name: label(element).slice(0, 150),
+        placeholder: clean(element.getAttribute("placeholder")).slice(0, 100),
+        href: element.tagName === "A" ? String(element.href || "").slice(0, 220) : "",
+        editable: element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName),
+        disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+        viewport: inViewport(element)
+      };
+    });
+  }
+
+  function semanticBlocks() {
+    const output = [];
+    const seen = new Set();
+    for (const root of roots()) for (const element of root.querySelectorAll(SEMANTIC)) {
+      if (!visible(element)) continue;
+      const text = clean(element.innerText || element.textContent);
+      if (text.length < 2 || seen.has(text)) continue;
+      seen.add(text);
+      output.push({ element, text, viewport: inViewport(element), top: element.getBoundingClientRect().top + scrollY });
+    }
+    return output;
+  }
+
+  function observe() {
+    const elements = observedElements();
+    const blocks = semanticBlocks();
+    const viewportText = clean(blocks.filter(block => block.viewport).map(block => block.text).join(" ")).slice(0, 1800);
+    const pageStart = clean(blocks.slice(0, 18).map(block => block.text).join(" ")).slice(0, 1000);
+    return [
+      `URL: ${location.href}`, `TITLE: ${document.title}`, "", "INTERACTIVE ELEMENTS:",
+      ...elements.map(element => `[${element.ref}] ${Object.entries(element)
+        .filter(([key, value]) => key !== "ref" && value !== "" && value !== false)
+        .map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(" | ")}`),
+      "", "VIEWPORT TEXT:", viewportText || "(none)", "", "PAGE START:", pageStart || "(none)"
+    ].join("\n");
+  }
+
+  function findRef(ref) {
+    for (const root of roots()) {
+      const found = root.querySelector(`[${REF}="${CSS.escape(ref)}"]`);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function elementByRef(ref) {
+    if (!/^e\d+$/.test(String(ref || ""))) throw new Error(`Invalid element ref: ${ref}`);
+    const element = findRef(ref);
+    if (!element) throw new Error(`Stale or missing element ref: ${ref}; request a fresh observation`);
+    return element;
+  }
+
+  function risky(element) {
+    const container = element.closest("form,[role=dialog],dialog,section") || element;
+    const controls = [...container.querySelectorAll("button,input[type=submit],a,[role=button]")].slice(0, 30);
+    const text = clean([
+      element.innerText, element.value, element.getAttribute("aria-label"),
+      element.getAttribute("title"), element.href, container.innerText,
+      ...controls.map(control => label(control))
+    ].filter(Boolean).join(" ")).toLowerCase();
+    return [
+      "delete", "remove", "erase", "destroy", "pay", "purchase", "buy now", "place order",
+      "confirm order", "send money", "transfer", "submit application", "send application", "unsubscribe",
+      "удалить", "оплатить", "купить", "оформить заказ", "подтвердить заказ", "перевести",
+      "отправить отклик", "откликнуться", "отписаться"
+    ].some(phrase => text.includes(phrase));
+  }
+
+  function nativeSet(element, text) {
+    if ("value" in element) {
+      const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+        : element instanceof HTMLInputElement ? HTMLInputElement.prototype : null;
+      const setter = prototype && Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      if (setter) setter.call(element, text); else element.value = text;
+    } else if (element.isContentEditable) element.textContent = text;
+    else throw new Error("Element is not editable");
+  }
+
+  function readPage(args) {
+    const query = clean(args.query);
+    const ref = clean(args.ref);
+    const maxChars = Math.min(Math.max(Number(args.max_chars) || 1800, 300), 2400);
+    let blocks = [];
+    if (ref) {
+      const target = elementByRef(ref);
+      const container = target.closest("article,section,li,form,main,div") || target;
+      blocks = [{ text: clean(container.innerText || target.innerText || target.value), score: 1000, match: 0, top: 0 }];
+    } else {
+      blocks = semanticBlocks().map(block => ({ ...block, score: block.viewport ? 20 : 0, match: 0 }));
+    }
+    const needle = query.toLowerCase();
+    const tokens = needle.split(/\s+/).filter(token => token.length > 1);
+    for (const block of blocks) {
+      const lower = block.text.toLowerCase();
+      if (needle && lower.includes(needle)) block.match += 200;
+      block.match += tokens.reduce((score, token) => score + (lower.includes(token) ? 15 : 0), 0);
+      block.score += block.match;
+    }
+    if (needle && !ref) blocks = blocks.filter(block => block.match > 0);
+    blocks.sort((a, b) => b.score - a.score || a.top - b.top);
+    let content = "";
+    for (const block of blocks) {
+      if (!block.text || content.includes(block.text)) continue;
+      const next = content ? `${content}\n${block.text}` : block.text;
+      if (next.length > maxChars) {
+        if (!content) content = block.text.slice(0, maxChars);
+        break;
+      }
+      content = next;
+    }
+    if (!content) content = clean(document.body?.innerText).slice(0, maxChars);
+    if (!content) throw new Error("No readable content found on the current page");
+    return {
+      message: `Read ${content.length} characters from current page${query ? ` for ${query}` : ""}`,
+      evidence: { source_url: location.href, title: document.title, query, content }
+    };
+  }
+
+  async function act(name, args) {
+    if (name === "navigate" || name === "back") throw new Error("Navigation is handled by the extension controller");
+    if (name === "read_page") return readPage(args);
+    if (name === "find_text") {
+      const query = clean(args.text).toLowerCase();
+      if (!query) throw new Error("find_text requires non-empty text");
+      const hit = semanticBlocks().find(block => block.text.toLowerCase().includes(query));
+      if (!hit) throw new Error(`Text not found: ${args.text}`);
+      hit.element.scrollIntoView({ block: "center" });
+      await sleep(350);
+      return { message: `Found and scrolled to text: ${args.text}` };
+    }
+    if (name === "scroll") {
+      scrollBy({ top: Number(args.amount) || 700, behavior: "smooth" });
+      await sleep(450);
+      return { message: "Scrolled" };
+    }
+    if (name === "wait") {
+      await sleep(Math.min(Math.max(Number(args.milliseconds) || 1000, 100), 5000));
+      return { message: "Waited" };
+    }
+    const element = elementByRef(args.ref);
+    if (name === "click") {
+      if (risky(element) && !args.confirmed) return { blocked: true, message: `Confirmation required: ${label(element) || args.ref}` };
+      element.scrollIntoView({ block: "center" });
+      element.focus({ preventScroll: true });
+      element.click();
+      await sleep(500);
+      return { message: `Clicked ${args.ref}` };
+    }
+    if (name === "type") {
+      if (args.submit && risky(element) && !args.confirmed)
+        return { blocked: true, message: `Confirmation required before submitting: ${label(element) || args.ref}` };
+      element.scrollIntoView({ block: "center" });
+      element.focus({ preventScroll: true });
+      if (args.clear !== false) nativeSet(element, "");
+      nativeSet(element, String(args.text || ""));
+      try {
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: args.text }));
+      } catch (_) { element.dispatchEvent(new Event("input", { bubbles: true })); }
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      if (args.submit) {
+        for (const type of ["keydown", "keypress", "keyup"])
+          element.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        if (element.form && typeof element.form.requestSubmit === "function") element.form.requestSubmit();
+      }
+      await sleep(500);
+      return { message: `Typed ${args.ref}` };
+    }
+    if (name === "press") {
+      if (["enter", "space"].includes(String(args.key || "").toLowerCase()) && risky(element) && !args.confirmed)
+        return { blocked: true, message: `Confirmation required before consequential key action: ${label(element) || args.ref}` };
+      element.focus({ preventScroll: true });
+      for (const type of ["keydown", "keypress", "keyup"])
+        element.dispatchEvent(new KeyboardEvent(type, { key: args.key, code: args.key, bubbles: true, cancelable: true }));
+      await sleep(150);
+      return { message: `Pressed ${args.key}` };
+    }
+    throw new Error(`Unknown tool ${name}`);
+  }
+
+  chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+    if (message.type === "OBSERVE") {
+      try { reply({ ok: true, observation: observe() }); }
+      catch (error) { reply({ ok: false, message: error.message }); }
+      return;
+    }
+    if (message.type === "ACT") {
+      act(message.name, message.args || {})
+        .then(result => reply(result.blocked ? { ok: false, ...result } : { ok: true, ...result }))
+        .catch(error => reply({ ok: false, message: error.message }));
+      return true;
+    }
+  });
+})();

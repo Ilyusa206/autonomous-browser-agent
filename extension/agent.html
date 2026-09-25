@@ -1,1 +1,16 @@
-<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="agent.css"></head><body><header><div><b>Browser Agent</b><small id="state">Ready</small></div><button id="close">×</button></header><main><textarea id="task" placeholder="Что нужно сделать?"></textarea><div class="buttons"><button id="run">Запустить</button><button id="stop">Стоп</button></div><section><b>Plan</b><div id="plan">—</div></section><section><b>Timeline</b><div id="log"></div></section><div id="human"></div></main><script src="agent.js"></script></body></html>
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><link rel="stylesheet" href="agent.css"><title>Browser Agent</title></head>
+<body>
+  <header><div><b>Browser Agent</b><small id="state">Готов</small></div><button id="close" aria-label="Закрыть">×</button></header>
+  <main>
+    <textarea id="task" placeholder="Опишите цель целиком — агент сам выполнит последовательность шагов"></textarea>
+    <div class="buttons"><button id="run">Запустить</button><button id="stop">Стоп</button></div>
+    <section><b>Прогресс</b><div id="plan">—</div></section>
+    <section><b>Извлечённые факты</b><div id="evidence">Пока нет извлечённых фактов</div></section>
+    <section><b>Ход выполнения</b><div id="log"></div></section>
+    <div id="human"></div>
+  </main>
+  <script src="agent.js"></script>
+</body>
+</html>

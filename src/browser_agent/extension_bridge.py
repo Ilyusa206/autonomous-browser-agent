@@ -4,6 +4,7 @@ from flask import Flask, jsonify, request
 
 from browser_agent.agent import TOOL_SCHEMAS
 from browser_agent.provider import BrowserLLMProvider, get_provider_from_env
+from browser_agent.state import AgentState, task_requires_evidence
 
 app = Flask(__name__)
 provider: BrowserLLMProvider | None = None
@@ -41,13 +42,26 @@ def decision():
     if not task:
         return jsonify({"error": "task is required"}), 400
 
-    plan_data = data.get("plan") or {}
-    plan_text = "PLAN:\n" + "\n".join(f"- {x}" for x in plan_data.get("steps", []))
-    criteria = "\nSUCCESS CRITERIA:\n" + "\n".join(
-        f"- {x}" for x in plan_data.get("success_criteria", [])
-    )
-    last = str(data.get("last_action", "(none)"))
-    context = plan_text + criteria + "\nLAST ACTION: " + last
+    state = AgentState.from_dict(data.get("state"), objective=task)
+    last_result = data.get("last_result")
+    if isinstance(last_result, dict):
+        state.ingest_result(last_result, after_observation=observation)
+    else:
+        state.observe(observation)
+    context = state.render()
+
+    if state.no_progress_count >= 6:
+        return jsonify(
+            {
+                "kind": "stop",
+                "name": None,
+                "arguments": {},
+                "text": "Stopped after repeated actions produced no page change or new evidence. "
+                "The last failed strategies are preserved in agent state.",
+                "verification": None,
+                "state": state.to_dict(),
+            }
+        )
 
     result = p.decide(
         task=task,
@@ -58,23 +72,62 @@ def decision():
 
     verification = None
     if result.kind == "finish":
+        if task_requires_evidence(task) and not state.evidence:
+            state.reject_finish(
+                ["Extract relevant page content with read_page before finishing"],
+                "Informational result has no grounded evidence",
+            )
+            return jsonify(
+                {
+                    "kind": "retry" if state.finish_rejections < 3 else "stop",
+                    "name": None,
+                    "arguments": {},
+                    "text": "Informational completion rejected: no extracted evidence.",
+                    "verification": {
+                        "complete": False,
+                        "summary": "Informational result has no grounded evidence",
+                        "missing": ["Extract relevant page content with read_page before finishing"],
+                    },
+                    "state": state.to_dict(),
+                }
+            )
         verification = p.verify_goal(
             task=task,
             observation=observation,
             candidate_answer=result.text or "",
-            history_summary=last,
+            history_summary=context,
         )
         if not verification.complete:
-            feedback = (
-                "VERIFIER: NOT COMPLETE. Missing: "
-                + "; ".join(verification.missing)
-                + ". Continue with a browser tool action; do not finish."
-            )
-            result = p.decide(
-                task=task,
-                observation=observation,
-                history=[{"role": "user", "content": context + "\n" + feedback}],
-                tools=TOOL_SCHEMAS,
+            state.reject_finish(verification.missing, verification.summary)
+            if state.finish_rejections >= 3:
+                return jsonify(
+                    {
+                        "kind": "stop",
+                        "name": None,
+                        "arguments": {},
+                        "text": "Stopped after three rejected completion attempts: "
+                        + (state.verifier_feedback[-1] if state.verifier_feedback else "insufficient grounded evidence"),
+                        "verification": {
+                            "complete": False,
+                            "summary": verification.summary,
+                            "missing": verification.missing,
+                        },
+                        "state": state.to_dict(),
+                    }
+                )
+            return jsonify(
+                {
+                    "kind": "retry",
+                    "name": None,
+                    "arguments": {},
+                    "text": "Verifier rejected completion; continue from the missing work in agent state.",
+                    "verification": {
+                        "complete": False,
+                        "summary": verification.summary,
+                        "missing": verification.missing,
+                    },
+                    "state": state.to_dict(),
+                }
             )
 
     return jsonify(
@@ -90,6 +143,7 @@ def decision():
                 "summary": verification.summary,
                 "missing": verification.missing,
             },
+            "state": state.to_dict(),
         }
     )
 

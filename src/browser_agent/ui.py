@@ -82,7 +82,7 @@ def emit(kind: str, message: str) -> None:
     state["status"] = {
         "thinking": "Анализирую", "tool": "Выполняю", "result": "Проверяю",
         "recovery": "Восстанавливаюсь", "safety": "Нужно подтверждение",
-        "waiting": "Жду лимит API", "user_input": "Жду вас", "user_answer": "Продолжаю", "finish": "Готово",
+        "waiting": "Жду лимит API", "evidence": "Сохраняю факты", "user_input": "Жду вас", "user_answer": "Продолжаю", "finish": "Готово",
     }.get(kind, state["status"])
 
 
@@ -144,7 +144,7 @@ def run_task():
             page = controller.start()
             emit("result", f"Браузер готов: {page.url}")
             result = AutonomousAgent(
-                page, GroqProvider(event_sink=emit), max_steps=24,
+                page, get_provider_from_env(event_sink=emit), max_steps=24,
                 event_sink=emit, confirm_callback=confirm, ask_user_callback=ask_user,
             ).run(task)
             state["result"] = result.message

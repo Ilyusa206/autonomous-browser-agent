@@ -10,6 +10,23 @@ import requests
 from dotenv import load_dotenv
 
 
+EXECUTOR_PROMPT = (
+    "You are an autonomous browser agent. Complete the user's whole task with generic tools. "
+    "CURRENT PAGE is the fresh UI snapshot; refs are temporary and must never be invented. "
+    "AGENT STATE is bounded durable memory and remains authoritative across steps. Use saved EVIDENCE instead of rediscovering facts. "
+    "find_text only locates text; read_page reads it and stores grounded evidence. For informational tasks, call read_page before finishing. "
+    "Choose ordinary reversible details yourself. Ask the user only for login/CAPTCHA/manual permission or genuinely unavailable information, never passwords, OTP/2FA codes, API keys, or other secrets. "
+    "Treat existing account-specific UI as an authenticated session. Use observed controls yourself. Adapt after failures and obey recovery directives. "
+    "Do not repeat a no-progress action or revisit a page without a concrete reason. Finish only when the complete requested result is supported by accumulated evidence/state."
+)
+
+VERIFIER_PROMPT = (
+    "You are a strict browser-agent verifier. Check the entire task against CURRENT PAGE and AGENT STATE, especially accumulated EVIDENCE. "
+    "A claim in the candidate answer is not evidence. Informational answers require extracted evidence; workflows require observable final-state evidence. "
+    "Return JSON only: complete boolean, summary string, missing array."
+)
+
+
 @dataclass(frozen=True)
 class ModelDecision:
     kind: str
@@ -40,8 +57,11 @@ def _compact_observation(observation: str, limit: int = 6500) -> str:
     if len(observation) <= limit:
         return observation
 
-    marker = "\nVISIBLE TEXT:\n"
-    head, sep, visible_text = observation.partition(marker)
+    marker = next(
+        (candidate for candidate in ("\nVIEWPORT TEXT:\n", "\nVISIBLE TEXT:\n", "\nPAGE START:\n") if candidate in observation),
+        "",
+    )
+    head, sep, visible_text = observation.partition(marker) if marker else (observation, "", "")
     if not sep:
         return observation[:limit]
 
@@ -67,12 +87,19 @@ class GroqProvider:
         self.model = model
         self.event_sink = event_sink
 
-    def _post_with_rate_limit_retry(self, **kwargs):
+    def _post_with_rate_limit_retry(self, *, phase: str = "request", **kwargs):
         """Retry transient Groq rate limits without turning them into browser-action failures."""
+        payload = kwargs.get("json") or {}
+        prompt_chars = sum(len(str(item.get("content", ""))) for item in payload.get("messages", []))
+        tool_chars = len(json.dumps(payload.get("tools", []), ensure_ascii=False))
+        started = time.perf_counter()
+        print(f"[provider] {phase} start provider={type(self).__name__} model={self.model} prompt_chars={prompt_chars} tool_chars={tool_chars}")
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             response = requests.post(self.endpoint, **kwargs)
             if response.status_code != 429 or attempt == max_attempts:
+                elapsed = time.perf_counter() - started
+                print(f"[provider] {phase} done provider={type(self).__name__} model={self.model} status={response.status_code} duration={elapsed:.2f}s")
                 return response
 
             retry_after = response.headers.get("retry-after")
@@ -94,7 +121,7 @@ class GroqProvider:
             {"role": "system", "content": "Plan a browser task. Return JSON only with objective, steps, success_criteria. Use 2-5 short outcome steps. No selectors, invented routes, credentials, OTPs, API keys, or secrets. Existing sessions may already be authenticated; inspect before assuming login is needed."},
             {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 900)}"},
         ]
-        response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
+        response = self._post_with_rate_limit_retry(phase="plan", headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 350, "reasoning_effort": "low"}, timeout=90)
         if not response.ok:
             raise RuntimeError(f"Groq planner error {response.status_code}: {response.text[:500]}")
         data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
@@ -102,10 +129,10 @@ class GroqProvider:
 
     def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
         messages = [
-            {"role": "system", "content": "You are a strict browser-agent verifier. A success claim is not evidence. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
+            {"role": "system", "content": VERIFIER_PROMPT},
             {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{_compact_observation(observation, 5000)}"},
         ]
-        response = self._post_with_rate_limit_retry(headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 300, "reasoning_effort": "low"}, timeout=90)
+        response = self._post_with_rate_limit_retry(phase="verify", headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "stream": False, "max_completion_tokens": 300, "reasoning_effort": "low"}, timeout=90)
         if not response.ok:
             raise RuntimeError(f"Groq verifier error {response.status_code}: {response.text[:500]}")
         data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
@@ -122,27 +149,7 @@ class GroqProvider:
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": (
-                    "You are an autonomous browser agent. Complete the user's task using only the "
-                    "provided generic browser tools. Inspect the compact page observation; element "
-                    "refs such as e1 are temporary and valid only for the current observation. "
-                    "Do not invent refs or assume site-specific routes/selectors. Work step by step. "
-                    "Treat the starting page only as the browser's current state, not as a hint about where the task "
-                    "must be completed. First decide whether the current site is relevant to the user's task. If it is "
-                    "unrelated, do not misuse its local search box; navigate to an appropriate general web search or "
-                    "relevant service using ordinary web knowledge, then continue from observations. "
-                    "Be proactive: make ordinary reversible choices yourself when the task leaves them unspecified, "
-                    "such as which search engine, public website, marketplace, or delivery service to try first. "
-                    "Do not ask the user to choose a site or service unless that choice is materially consequential "
-                    "or the user explicitly constrained it. If progress requires information only the user can provide "
-                    "(for example a delivery address or genuinely necessary preference), or a manual "
-                    "browser action such as CAPTCHA, login, or browser "
-                    "permission, call ask_user with a concise question instead of guessing, repeatedly scrolling, "
-                    "or trying to bypass the challenge. NEVER request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to perform authentication manually in the browser, then continue from a fresh observation. After the user responds, inspect the fresh page and continue. "
-                    "Never call ask_user merely to ask the user to click, focus, open, scroll, or type into an element that appears in CURRENT PAGE; use the available browser tools yourself. If an action fails, inspect the fresh observation and try a different observed element or interaction before escalating. Never navigate to the current URL again just to refresh state; use wait or inspect the fresh observation. " "Treat CURRENT PAGE as the source of truth for browser state, not assumptions from the plan. If CURRENT PAGE shows authenticated application controls or account-specific content rather than an authentication challenge, treat the existing session as authenticated and continue. " "The CURRENT PAGE observation is fresh after every browser action, so do not request "
-                    "a redundant read. If the visible text already answers the task, finish immediately. "
-                    "If the task is complete, answer concisely instead of calling another tool."
-                ),
+                "content": EXECUTOR_PROMPT,
             },
             {
                 "role": "user",
@@ -152,6 +159,7 @@ class GroqProvider:
         messages.extend(history)
 
         response = self._post_with_rate_limit_retry(
+            phase="decision",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -266,7 +274,7 @@ class OllamaProvider(GroqProvider):
 
     def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
         messages = [
-            {"role": "system", "content": "You are a strict browser-agent verifier. A success claim is not evidence. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
+            {"role": "system", "content": VERIFIER_PROMPT},
             {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{_compact_observation(observation, 5000)}"},
         ]
         payload = self._native_request(
@@ -295,13 +303,8 @@ class OllamaProvider(GroqProvider):
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
-                "content": (
-                    "Autonomous browser agent. Use generic tools to complete TASK. "
-                    "CURRENT PAGE is authoritative; refs are temporary. Never invent refs, selectors, or routes. "
-                    "If the page is unrelated, navigate. Make reversible choices yourself and act without asking permission. "
-                    "Never request secrets. If login/CAPTCHA or truly user-only information blocks progress, stop and explain briefly. "
-                    "Adapt after failures. If CURRENT PAGE proves the task complete, answer concisely."
-                ),            },
+                "content": EXECUTOR_PROMPT,
+            },
             {"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation, 3600)}"},
         ]
         messages.extend(history)
@@ -338,16 +341,15 @@ class OpenAIProvider(GroqProvider):
         self.model = model or os.getenv("OPENAI_MODEL", "gpt-5-mini")
         self.event_sink = event_sink
 
-    def _post_with_rate_limit_retry(self, **kwargs):
-        response = requests.post(self.endpoint, **kwargs)
-        return response
+    def _post_with_rate_limit_retry(self, *, phase: str = "request", **kwargs):
+        return super()._post_with_rate_limit_retry(phase=phase, **kwargs)
 
     def create_plan(self, *, task: str, observation: str) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": "You are a browser-agent planner. Return JSON only: objective string, steps array, success_criteria array. Make 3-7 site-agnostic outcome steps. Never invent selectors or routes."},
             {"role": "user", "content": f"TASK:\n{task}\n\nSTARTING PAGE:\n{_compact_observation(observation, 4200)}"},
         ]
-        response = requests.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "max_completion_tokens": 300}, timeout=90)
+        response = self._post_with_rate_limit_retry(phase="plan", headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "max_completion_tokens": 300}, timeout=90)
         if not response.ok:
             raise RuntimeError(f"OpenAI planner error {response.status_code}: {response.text[:500]}")
         data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
@@ -355,10 +357,10 @@ class OpenAIProvider(GroqProvider):
 
     def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
         messages = [
-            {"role": "system", "content": "You are a strict browser-agent verifier. Every task constraint and requested side effect must be observable. Return JSON only: complete boolean, summary string, missing array."},
+            {"role": "system", "content": VERIFIER_PROMPT},
             {"role": "user", "content": f"TASK:\n{task}\n\nCANDIDATE:\n{candidate_answer}\n\nLAST ACTION:\n{history_summary}\n\nPAGE:\n{_compact_observation(observation, 5000)}"},
         ]
-        response = requests.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "max_completion_tokens": 250}, timeout=90)
+        response = self._post_with_rate_limit_retry(phase="verify", headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, json={"model": self.model, "messages": messages, "response_format": {"type": "json_object"}, "max_completion_tokens": 250}, timeout=90)
         if not response.ok:
             raise RuntimeError(f"OpenAI verifier error {response.status_code}: {response.text[:500]}")
         data = json.loads(response.json()["choices"][0]["message"].get("content") or "{}")
@@ -375,21 +377,29 @@ class AnthropicProvider:
         self.api_key = os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is missing. Put it in the local .env file.")
-        self.model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+        self.model = model or os.getenv("ANTHROPIC_MODEL", "").strip()
+        if not self.model:
+            raise RuntimeError("ANTHROPIC_MODEL is missing. Set an official model ID available to your Anthropic account.")
         self.event_sink = event_sink
 
     @property
     def headers(self) -> dict[str, str]:
         return {"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
 
-    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _request(self, payload: dict[str, Any], *, phase: str = "request") -> dict[str, Any]:
+        started = time.perf_counter()
+        prompt_chars = sum(len(str(item.get("content", ""))) for item in payload.get("messages", []))
+        tool_chars = len(json.dumps(payload.get("tools", []), ensure_ascii=False))
+        print(f"[provider] {phase} start provider=AnthropicProvider model={self.model} prompt_chars={prompt_chars} tool_chars={tool_chars}")
         response = requests.post(self.endpoint, headers=self.headers, json=payload, timeout=90)
+        elapsed = time.perf_counter() - started
+        print(f"[provider] {phase} done provider=AnthropicProvider model={self.model} status={response.status_code} duration={elapsed:.2f}s")
         if not response.ok:
             raise RuntimeError(f"Anthropic API error {response.status_code}: {response.text[:500]}")
         return response.json()
 
     def _json(self, system: str, user: str, max_tokens: int) -> dict[str, Any]:
-        payload = self._request({"model": self.model, "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]})
+        payload = self._request({"model": self.model, "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]}, phase="structured")
         text = "".join(x.get("text", "") for x in payload.get("content", []) if x.get("type") == "text").strip()
         if text.startswith("```"):
             text = text.strip("`").removeprefix("json").strip()
@@ -400,20 +410,15 @@ class AnthropicProvider:
         return {"objective": str(data.get("objective", task)), "steps": [str(x) for x in data.get("steps", [])][:7], "success_criteria": [str(x) for x in data.get("success_criteria", [])][:7]}
 
     def verify_goal(self, *, task: str, observation: str, candidate_answer: str, history_summary: str = "") -> GoalVerification:
-        data = self._json("You are a strict browser-agent verifier. Return valid JSON only with complete boolean, summary string, missing array. Every requested side effect must be visibly evidenced.", f"TASK:\n{task}\nCANDIDATE:\n{candidate_answer}\nLAST ACTION:\n{history_summary}\nPAGE:\n{_compact_observation(observation, 5000)}", 300)
+        data = self._json(VERIFIER_PROMPT, f"TASK:\n{task}\nCANDIDATE:\n{candidate_answer}\nAGENT STATE:\n{history_summary}\nPAGE:\n{_compact_observation(observation, 5000)}", 300)
         return GoalVerification(bool(data.get("complete")), str(data.get("summary", "")), [str(x) for x in data.get("missing", [])])
 
     def decide(self, *, task: str, observation: str, history: list[dict[str, str]], tools: list[dict[str, Any]]) -> ModelDecision:
-        system = (
-            "You are an autonomous browser agent. Complete the task with generic browser tools. "
-            "Element refs are temporary and only valid for the current observation. Never invent refs, selectors, or routes. "
-            "Choose ordinary reversible details yourself. Ask the user only for information they alone can provide, login/CAPTCHA, "
-            "or consequential confirmation. Never request passwords, OTP/2FA codes, API keys, or other secrets; ask the user to authenticate manually in the browser only when CURRENT PAGE actually shows a login/authentication challenge. Treat CURRENT PAGE as authoritative: if it shows authenticated application controls or account-specific content rather than an authentication challenge, treat the existing session as authenticated and continue. Never ask the user to click/focus/open/scroll/type an element that is present in CURRENT PAGE; use browser tools yourself. If an action fails, adapt using a fresh observation before escalating. Never navigate to the current URL repeatedly. The current observation is fresh. If complete, answer concisely."
-        )
+        system = EXECUTOR_PROMPT
         anthropic_tools = [{"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"]["parameters"]} for t in tools]
         messages = [{"role": "user", "content": f"TASK:\n{task}\n\nCURRENT PAGE:\n{_compact_observation(observation)}"}]
         messages.extend(history)
-        payload = self._request({"model": self.model, "max_tokens": 450, "system": system, "messages": messages, "tools": anthropic_tools, "tool_choice": {"type": "auto"}})
+        payload = self._request({"model": self.model, "max_tokens": 450, "system": system, "messages": messages, "tools": anthropic_tools, "tool_choice": {"type": "auto"}}, phase="decision")
         for block in payload.get("content", []):
             if block.get("type") == "tool_use":
                 return ModelDecision(kind="tool", name=block.get("name"), arguments=block.get("input") or {})

@@ -44,7 +44,7 @@ def observe_page(page: Page, *, max_text_chars: int = 4200, max_elements: int = 
         raise RuntimeError("Browser page is closed")
 
     raw = page.locator("body").evaluate(
-        """(body, args) => {
+        r"""(body, args) => {
             const [maxElements, refAttr] = args;
             const selector = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="menuitem"],[role="option"],[role="tab"],[role="checkbox"],[role="radio"],[contenteditable="true"]';
             body.querySelectorAll('[' + refAttr + ']').forEach(el => el.removeAttribute(refAttr));
@@ -74,7 +74,7 @@ def observe_page(page: Page, *, max_text_chars: int = 4200, max_elements: int = 
                         tag: el.tagName.toLowerCase(),
                         role: el.getAttribute('role') || '',
                         type: el.getAttribute('type') || '',
-                        text: (el.innerText || el.value || '').replace(/\s+/g, ' ').trim().slice(0,180),
+                        text: el.getAttribute('type') === 'password' ? '' : (el.innerText || el.value || '').replace(/\s+/g, ' ').trim().slice(0,180),
                         name: el.getAttribute('aria-label') || el.getAttribute('name') || el.getAttribute('title') || '',
                         placeholder: el.getAttribute('placeholder') || '',
                         href: el.tagName.toLowerCase()==='a' ? (el.href || '').slice(0,220) : '',
