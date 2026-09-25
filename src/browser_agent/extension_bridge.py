@@ -64,8 +64,22 @@ def decision():
         )
 
     stalled_reads = [a for a in state.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
+    recent_reads = [a for a in state.recent_actions[-4:] if a.tool == "read_page"]
+    has_fresh_read_evidence = bool(recent_reads and any(a.progress for a in recent_reads))
     available_tools = TOOL_SCHEMAS
-    if len(stalled_reads) >= 2:
+    completion_checkpoint = len(stalled_reads) >= 2 and bool(state.evidence) and has_fresh_read_evidence
+    if completion_checkpoint:
+        # Tool-biased small models may keep browsing even after they have enough
+        # grounded evidence. Force one answer-only checkpoint; the verifier still
+        # decides whether the task is actually complete. A rejection returns
+        # concrete missing work and normal tools are available on the next turn.
+        available_tools = []
+        state.current_subgoal = (
+            "Completion checkpoint: answer the user's whole task now from accumulated evidence. "
+            "Do not browse. The verifier will reject the answer if evidence is insufficient."
+        )
+        context = state.render()
+    elif len(stalled_reads) >= 2:
         # Recovery must be structural, not merely prompt advice: a weak model
         # can keep selecting the same tool forever. Temporarily remove the
         # stalled action family so the next decision must use another strategy.
@@ -85,6 +99,18 @@ def decision():
 
     # Defensive fallback for providers that return a tool not present in the
     # supplied schema.
+    if result.kind == "tool" and completion_checkpoint:
+        return jsonify(
+            {
+                "kind": "retry",
+                "name": None,
+                "arguments": {},
+                "text": "Provider selected a tool during an answer-only completion checkpoint.",
+                "verification": None,
+                "state": state.to_dict(),
+            }
+        )
+
     if result.kind == "tool" and result.name == "read_page" and len(stalled_reads) >= 2:
         return jsonify(
             {
