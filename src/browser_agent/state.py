@@ -271,7 +271,10 @@ class AgentState:
                 tail.append(f"- {action.signature} -> ok={action.ok}, {flag}: {action.message}")
         repeated = self.repeated_no_progress_signature()
         if repeated:
-            tail.append(f"RECOVERY DIRECTIVE: {repeated} repeated without state/evidence change. Choose a different strategy/tool.")
+            tail.append(f"RECOVERY DIRECTIVE: {repeated} repeated without state/evidence change. Do NOT call the same tool for the same target again. Change strategy: use a relevant observed link/control, navigate to a more specific destination supported by the UI, broaden/narrow the query, or finish if accumulated evidence already answers the task.")
+        stalled_reads = [a for a in self.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
+        if len(stalled_reads) >= 2:
+            tail.append("EXTRACTION STALL: repeated read_page calls produced no new evidence. Stop re-reading this target. Use the current page navigation/links to reach a more relevant source or choose a materially different query.")
         if self.failures:
             tail.append("FAILURES: " + " | ".join(self.failures[-4:]))
         if self.verifier_feedback:
