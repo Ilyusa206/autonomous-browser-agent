@@ -174,26 +174,50 @@
     if (ref) {
       const target = elementByRef(ref);
       const container = target.closest("article,section,li,form,main,div") || target;
-      blocks = [{ text: clean(container.innerText || target.innerText || target.value), score: 1000, match: 0, top: 0 }];
+      blocks = [{ element: container, text: clean(container.innerText || target.innerText || target.value), score: 1000, match: 0, top: 0 }];
     } else {
       blocks = semanticBlocks().map(block => ({ ...block, score: block.viewport ? 20 : 0, match: 0 }));
     }
+
     const needle = query.toLowerCase();
-    const tokens = needle.split(/\s+/).filter(token => token.length > 1);
+    const tokens = needle.split(/\\s+/).filter(token => token.length > 1);
     for (const block of blocks) {
       const lower = block.text.toLowerCase();
       if (needle && lower.includes(needle)) block.match += 200;
       block.match += tokens.reduce((score, token) => score + (lower.includes(token) ? 15 : 0), 0);
       block.score += block.match;
     }
-    if (needle && !ref) blocks = blocks.filter(block => block.match > 0);
-    blocks.sort((a, b) => b.score - a.score || a.top - b.top);
+
+    let selected = [];
+    if (needle && !ref) {
+      const matches = blocks.filter(block => block.match > 0).sort((a, b) => b.score - a.score || a.top - b.top);
+      const anchor = matches[0];
+      if (anchor) {
+        const ordered = [...blocks].sort((a, b) => a.top - b.top);
+        const index = ordered.indexOf(anchor);
+        const nearby = ordered.slice(Math.max(0, index - 2), Math.min(ordered.length, index + 4));
+        const section = anchor.element?.closest?.("article,section,main,dl,div");
+        const sectionText = clean(section?.innerText || "");
+        if (sectionText && sectionText.length <= maxChars * 2) {
+          selected.push({ ...anchor, text: sectionText, score: anchor.score + 500 });
+        }
+        selected.push(...nearby);
+        selected.push(...matches.slice(1, 4));
+      }
+    } else {
+      selected = [...blocks].sort((a, b) => b.score - a.score || a.top - b.top);
+    }
+
     let content = "";
-    for (const block of blocks) {
-      if (!block.text || content.includes(block.text)) continue;
-      const next = content ? `${content}\n${block.text}` : block.text;
+    const seen = new Set();
+    for (const block of selected) {
+      const text = clean(block.text);
+      if (!text || seen.has(text) || (content && content.includes(text))) continue;
+      seen.add(text);
+      const next = content ? `${content}\n${text}` : text;
       if (next.length > maxChars) {
-        if (!content) content = block.text.slice(0, maxChars);
+        const remaining = maxChars - content.length - (content ? 1 : 0);
+        if (remaining > 80) content = content ? `${content}\n${text.slice(0, remaining)}` : text.slice(0, maxChars);
         break;
       }
       content = next;

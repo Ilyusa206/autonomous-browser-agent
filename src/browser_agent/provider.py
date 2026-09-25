@@ -323,8 +323,12 @@ class OllamaProvider(GroqProvider):
             arguments = function.get("arguments") or {}
             if isinstance(arguments, str):
                 arguments = json.loads(arguments)
-            return ModelDecision(kind="tool", name=function.get("name"), arguments=arguments)
-        return ModelDecision(kind="finish", text=(message.get("content") or "").strip())
+            decision = ModelDecision(kind="tool", name=function.get("name"), arguments=arguments)
+            print(f"[ollama] decision result kind=tool name={decision.name} args={json.dumps(decision.arguments or {}, ensure_ascii=False)[:500]}")
+            return decision
+        decision = ModelDecision(kind="finish", text=(message.get("content") or "").strip())
+        print(f"[ollama] decision result kind=finish text={str(decision.text or '')[:500]}")
+        return decision
 
 
 
