@@ -95,3 +95,7 @@ def test_rejected_finish_preserves_evidence_and_demands_minimal_recovery() -> No
     assert "collect only this missing item" in state.current_subgoal
     assert "POST-VERIFIER RECOVERY" in rendered
     assert "do not invent or guess URLs/anchors" in rendered
+
+    state.remaining_work = []
+    recovered = state.render()
+    assert "POST-VERIFIER RECOVERY" not in recovered
