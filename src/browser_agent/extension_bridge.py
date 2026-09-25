@@ -63,33 +63,39 @@ def decision():
             }
         )
 
+    stalled_reads = [a for a in state.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
+    available_tools = TOOL_SCHEMAS
+    if len(stalled_reads) >= 2:
+        # Recovery must be structural, not merely prompt advice: a weak model
+        # can keep selecting the same tool forever. Temporarily remove the
+        # stalled action family so the next decision must use another strategy.
+        available_tools = [tool for tool in TOOL_SCHEMAS if tool["function"]["name"] != "read_page"]
+        state.current_subgoal = (
+            "Extraction is stalled. read_page is temporarily unavailable. Use observed navigation/links, "
+            "navigate to a better source supported by the UI, or finish from existing evidence."
+        )
+        context = state.render()
+
     result = p.decide(
         task=task,
         observation=observation,
         history=[{"role": "user", "content": context}],
-        tools=TOOL_SCHEMAS,
+        tools=available_tools,
     )
 
-    # A weak local model may ignore textual recovery directives. Enforce the
-    # generic no-progress invariant at the controller boundary instead of
-    # spending more browser steps on the same extraction family.
-    if result.kind == "tool" and result.name == "read_page":
-        stalled_reads = [a for a in state.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
-        if len(stalled_reads) >= 2:
-            state.current_subgoal = (
-                "Extraction is stalled. Do not read this page again; use observed navigation/links, "
-                "navigate to a better source supported by the UI, or finish from existing evidence."
-            )
-            return jsonify(
-                {
-                    "kind": "retry",
-                    "name": None,
-                    "arguments": {},
-                    "text": "Repeated read_page blocked by controller. This retry does not consume the browser no-progress budget; choose a different action family.",
-                    "verification": None,
-                    "state": state.to_dict(),
-                }
-            )
+    # Defensive fallback for providers that return a tool not present in the
+    # supplied schema.
+    if result.kind == "tool" and result.name == "read_page" and len(stalled_reads) >= 2:
+        return jsonify(
+            {
+                "kind": "retry",
+                "name": None,
+                "arguments": {},
+                "text": "Provider selected a temporarily unavailable tool; choose a different action family.",
+                "verification": None,
+                "state": state.to_dict(),
+            }
+        )
 
     verification = None
     if result.kind == "finish":
