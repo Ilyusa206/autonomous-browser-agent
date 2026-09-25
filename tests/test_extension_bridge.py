@@ -43,3 +43,32 @@ def test_bridge_carries_evidence_between_stateless_http_decisions() -> None:
     assert len(second["state"]["evidence"]) == 1
     assert "target fact" in fake.contexts[-1]
     extension_bridge.provider = None
+
+
+class StubbornReadProvider:
+    model = "fake"
+
+    def decide(self, **kwargs):
+        return ModelDecision(kind="tool", name="read_page", arguments={"query": "same target", "max_chars": 2400})
+
+    def verify_goal(self, **kwargs):
+        return GoalVerification(False, "not done", [])
+
+
+def test_bridge_blocks_third_stalled_read_action_family() -> None:
+    extension_bridge.provider = StubbornReadProvider()
+    client = extension_bridge.app.test_client()
+    observation = "URL: https://example.test\nTITLE: Example\n\nVIEWPORT TEXT:\nsame target"
+    state = {
+        "objective": "Explain target",
+        "recent_actions": [
+            {"tool": "read_page", "arguments": {"query": "same target"}, "ok": True, "message": "read", "progress": False},
+            {"tool": "read_page", "arguments": {"query": "same target", "max_chars": 1000}, "ok": True, "message": "read", "progress": False},
+        ],
+        "no_progress_count": 2,
+    }
+    response = client.post("/api/decision", json={"task": "Explain target", "observation": observation, "state": state}).get_json()
+    assert response["kind"] == "retry"
+    assert "different action family" in response["text"]
+    assert response["state"]["no_progress_count"] == 3
+    extension_bridge.provider = None
