@@ -141,3 +141,43 @@ def test_stalled_extraction_with_fresh_evidence_forces_verified_completion_check
     assert response["verification"]["complete"] is True
     assert response["text"] == "Grounded answer from accumulated evidence"
     extension_bridge.provider = None
+
+
+class RejectThenBrowseProvider:
+    model = "fake"
+
+    def __init__(self) -> None:
+        self.tool_names: list[list[str]] = []
+
+    def decide(self, **kwargs):
+        names = [tool["function"]["name"] for tool in kwargs["tools"]]
+        self.tool_names.append(names)
+        return ModelDecision(kind="tool", name="navigate", arguments={"url": "https://example.test/better"})
+
+    def verify_goal(self, **kwargs):
+        return GoalVerification(False, "missing evidence", ["Find the exact limitation"])
+
+
+def test_verifier_rejection_restores_browser_tools_instead_of_repeating_finish() -> None:
+    fake = RejectThenBrowseProvider()
+    extension_bridge.provider = fake
+    client = extension_bridge.app.test_client()
+    observation = "URL: https://example.test/docs\nTITLE: Docs\n\nVIEWPORT TEXT:\ntarget"
+    state = {
+        "objective": "Explain target",
+        "evidence": [{"source_url": "https://example.test/docs", "title": "Docs", "content": "partial target fact", "query": "target"}],
+        "recent_actions": [
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "new evidence", "progress": True},
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "duplicate", "progress": False},
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "duplicate", "progress": False},
+        ],
+        "finish_rejections": 1,
+        "remaining_work": ["Find the exact limitation"],
+        "verifier_feedback": ["missing evidence. Find the exact limitation"],
+    }
+    response = client.post("/api/decision", json={"task": state["objective"], "observation": observation, "state": state}).get_json()
+    assert response["kind"] == "tool"
+    assert response["name"] == "navigate"
+    assert "read_page" in fake.tool_names[-1]
+    assert "Find the exact limitation" in response["state"]["current_subgoal"]
+    extension_bridge.provider = None

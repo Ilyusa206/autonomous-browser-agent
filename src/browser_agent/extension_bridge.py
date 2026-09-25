@@ -67,8 +67,24 @@ def decision():
     recent_reads = [a for a in state.recent_actions[-4:] if a.tool == "read_page"]
     has_fresh_read_evidence = bool(recent_reads and any(a.progress for a in recent_reads))
     available_tools = TOOL_SCHEMAS
-    completion_checkpoint = len(stalled_reads) >= 2 and bool(state.evidence) and has_fresh_read_evidence
-    if completion_checkpoint:
+    # A verifier rejection means the previous synthesis checkpoint was premature.
+    # Do not immediately force another answer from the same evidence: restore the
+    # browser tools so the agent can satisfy the verifier's concrete missing work.
+    completion_checkpoint = (
+        len(stalled_reads) >= 2
+        and bool(state.evidence)
+        and has_fresh_read_evidence
+        and state.finish_rejections == 0
+    )
+    if state.finish_rejections > 0:
+        available_tools = TOOL_SCHEMAS
+        missing = " | ".join(state.remaining_work[:3]) or "address the verifier feedback"
+        state.current_subgoal = (
+            "Verifier rejected the previous answer. Gather materially new evidence for the missing work: "
+            + missing
+        )
+        context = state.render()
+    elif completion_checkpoint:
         # Tool-biased small models may keep browsing even after they have enough
         # grounded evidence. Force one answer-only checkpoint; the verifier still
         # decides whether the task is actually complete. A rejection returns
