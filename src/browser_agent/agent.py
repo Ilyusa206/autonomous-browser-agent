@@ -61,6 +61,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "find_text",
+            "description": "Find literal text on the current page and scroll it into view. Use this before wandering to other pages when the task names a specific function, phrase, heading, product, or term that may already exist on the current page.",
+            "parameters": {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "scroll",
             "description": "Scroll vertically. Positive values scroll down; negative values scroll up.",
             "parameters": {
@@ -75,18 +87,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": "back",
             "description": "Go back one page in browser history.",
             "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "ask_user",
-            "description": "Pause only when progress truly requires user-only information, a manual login/CAPTCHA, consequential confirmation, or an interaction that cannot be performed with available tools. Never ask the user to click/focus an element that is present in the current observation and can be handled by click/type/press. Never request passwords, OTP/2FA codes, API keys, or other secrets.",
-            "parameters": {
-                "type": "object",
-                "properties": {"question": {"type": "string"}},
-                "required": ["question"],
-            },
         },
     },
     {

@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from browser_agent.provider import OllamaProvider
+from browser_agent.provider import OllamaProvider, _compact_observation
 
 
 def _provider() -> OllamaProvider:
@@ -51,7 +51,7 @@ def test_ollama_plan_uses_native_json_mode_and_disables_thinking():
     assert payload["think"] is False
     assert payload["stream"] is False
     assert payload["format"] == "json"
-    assert payload["options"]["num_predict"] == 320
+    assert payload["options"]["num_predict"] == 220
     assert plan["objective"] == "open page"
 
 
@@ -155,3 +155,39 @@ def test_ollama_plan_falls_back_when_json_is_truncated():
     assert plan["objective"] == "Open the page"
     assert len(plan["steps"]) == 3
     assert "final page observation" in plan["success_criteria"][0]
+
+
+def test_compact_observation_hard_bounds_large_element_header():
+    observation = (
+        "URL: https://example.com\nTITLE: Example\n\nINTERACTIVE ELEMENTS:\n"
+        + ("[e1] name='very long element'\n" * 500)
+        + "\nVISIBLE TEXT:\n"
+        + ("useful visible evidence " * 500)
+    )
+
+    compact = _compact_observation(observation, 1200)
+
+    assert len(compact) <= 1200
+    assert compact.startswith("URL: https://example.com")
+    assert "VISIBLE TEXT:" in compact
+    assert "useful visible evidence" in compact
+
+
+def test_ollama_executor_hard_bounds_observation_context():
+    provider = _provider()
+    response = _ok({"message": {"role": "assistant", "content": "done"}})
+    huge = (
+        "URL: https://example.com\nTITLE: Example\n\nINTERACTIVE ELEMENTS:\n"
+        + ("[e1] name='noise'\n" * 1000)
+        + "\nVISIBLE TEXT:\n"
+        + ("evidence " * 1000)
+    )
+
+    with patch("browser_agent.provider.requests.post", return_value=response) as post:
+        provider.decide(task="Read the page", observation=huge, history=[], tools=[])
+
+    payload = post.call_args.kwargs["json"]
+    user_message = payload["messages"][1]["content"]
+    page = user_message.split("CURRENT PAGE:\n", 1)[1]
+    assert len(page) <= 3600
+    assert "VISIBLE TEXT:" in page
