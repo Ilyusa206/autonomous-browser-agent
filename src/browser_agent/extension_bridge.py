@@ -80,7 +80,23 @@ def decision():
         and has_fresh_read_evidence
         and state.finish_rejections == 0
     )
-    if state.finish_rejections > 0:
+    latest_action = state.recent_actions[-1] if state.recent_actions else None
+    post_verifier_evidence_checkpoint = bool(
+        state.finish_rejections > 0
+        and latest_action
+        and latest_action.tool == "read_page"
+        and latest_action.progress
+    )
+
+    if post_verifier_evidence_checkpoint:
+        available_tools = []
+        missing = " | ".join(state.remaining_work[:3]) or "the verifier's missing work"
+        state.current_subgoal = (
+            "Post-verifier evidence checkpoint: newly extracted evidence may satisfy the missing work. "
+            "Answer the whole task now from accumulated evidence, especially: " + missing
+        )
+        context = state.render()
+    elif state.finish_rejections > 0:
         missing = " | ".join(state.remaining_work[:3]) or "address the verifier feedback"
         if trailing_stalled_reads >= 2:
             available_tools = [tool for tool in TOOL_SCHEMAS if tool["function"]["name"] != "read_page"]
@@ -127,7 +143,7 @@ def decision():
 
     # Defensive fallback for providers that return a tool not present in the
     # supplied schema.
-    if result.kind == "tool" and completion_checkpoint:
+    if result.kind == "tool" and (completion_checkpoint or post_verifier_evidence_checkpoint):
         return jsonify(
             {
                 "kind": "retry",
