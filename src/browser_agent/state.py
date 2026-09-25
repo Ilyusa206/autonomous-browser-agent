@@ -240,7 +240,10 @@ class AgentState:
         self.verifier_feedback = self.verifier_feedback[-MAX_VERIFIER_FEEDBACK:]
         self.remaining_work = [_clean(x, 500) for x in missing if x][:8]
         if self.remaining_work:
-            self.current_subgoal = self.remaining_work[0]
+            self.current_subgoal = (
+                "Verifier rejected completion. Keep existing evidence and collect only this missing item: "
+                + self.remaining_work[0]
+            )
 
     def render(self, limit: int = 7000) -> str:
         head = [
@@ -279,6 +282,12 @@ class AgentState:
             tail.append("FAILURES: " + " | ".join(self.failures[-4:]))
         if self.verifier_feedback:
             tail.append("VERIFIER FEEDBACK: " + " | ".join(self.verifier_feedback[-3:]))
+        if self.finish_rejections and self.remaining_work:
+            tail.append(
+                "POST-VERIFIER RECOVERY: preserve accumulated evidence and satisfy REMAINING with the smallest additional extraction. "
+                "If newly collected evidence now satisfies REMAINING, retry completion instead of browsing further. "
+                "Do not restart completed work and do not invent or guess URLs/anchors. Use only destinations supported by observed UI/evidence."
+            )
         tail.append(f"NO-PROGRESS COUNT: {self.no_progress_count}; FINISH REJECTIONS: {self.finish_rejections}")
 
         head_text = "\n".join(head)
