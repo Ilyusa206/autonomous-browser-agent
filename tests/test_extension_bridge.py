@@ -102,3 +102,42 @@ def test_blocked_model_retry_does_not_trigger_global_no_progress_stop() -> None:
     assert first["state"]["no_progress_count"] == 5
     assert "read_page" not in fake.tool_names[-1]
     extension_bridge.provider = None
+
+
+class AnswerWhenToollessProvider:
+    model = "fake"
+
+    def __init__(self) -> None:
+        self.tool_names: list[list[str]] = []
+
+    def decide(self, **kwargs):
+        names = [tool["function"]["name"] for tool in kwargs["tools"]]
+        self.tool_names.append(names)
+        if not names:
+            return ModelDecision(kind="finish", text="Grounded answer from accumulated evidence")
+        return ModelDecision(kind="tool", name="read_page", arguments={"query": "target"})
+
+    def verify_goal(self, **kwargs):
+        return GoalVerification(True, "Evidence answers the task", [])
+
+
+def test_stalled_extraction_with_fresh_evidence_forces_verified_completion_checkpoint() -> None:
+    fake = AnswerWhenToollessProvider()
+    extension_bridge.provider = fake
+    client = extension_bridge.app.test_client()
+    observation = "URL: https://example.test/docs\nTITLE: Docs\n\nVIEWPORT TEXT:\ntarget limitation"
+    state = {
+        "objective": "Read target and explain its limitation",
+        "evidence": [{"source_url": "https://example.test/docs", "title": "Docs", "content": "target does X; limitation is Y", "query": "target"}],
+        "recent_actions": [
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "new evidence", "progress": True},
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "duplicate", "progress": False},
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "duplicate", "progress": False},
+        ],
+    }
+    response = client.post("/api/decision", json={"task": state["objective"], "observation": observation, "state": state}).get_json()
+    assert fake.tool_names[-1] == []
+    assert response["kind"] == "finish"
+    assert response["verification"]["complete"] is True
+    assert response["text"] == "Grounded answer from accumulated evidence"
+    extension_bridge.provider = None
