@@ -63,7 +63,11 @@ def decision():
             }
         )
 
-    stalled_reads = [a for a in state.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
+    trailing_stalled_reads = 0
+    for action in reversed(state.recent_actions):
+        if action.tool != "read_page" or action.progress:
+            break
+        trailing_stalled_reads += 1
     recent_reads = [a for a in state.recent_actions[-4:] if a.tool == "read_page"]
     has_fresh_read_evidence = bool(recent_reads and any(a.progress for a in recent_reads))
     available_tools = TOOL_SCHEMAS
@@ -71,18 +75,26 @@ def decision():
     # Do not immediately force another answer from the same evidence: restore the
     # browser tools so the agent can satisfy the verifier's concrete missing work.
     completion_checkpoint = (
-        len(stalled_reads) >= 2
+        trailing_stalled_reads >= 2
         and bool(state.evidence)
         and has_fresh_read_evidence
         and state.finish_rejections == 0
     )
     if state.finish_rejections > 0:
-        available_tools = TOOL_SCHEMAS
         missing = " | ".join(state.remaining_work[:3]) or "address the verifier feedback"
-        state.current_subgoal = (
-            "Verifier rejected the previous answer. Gather materially new evidence for the missing work: "
-            + missing
-        )
+        if trailing_stalled_reads >= 2:
+            available_tools = [tool for tool in TOOL_SCHEMAS if tool["function"]["name"] != "read_page"]
+            state.current_subgoal = (
+                "Verifier rejected the previous answer and extraction on this page is stalled. "
+                "Do not read the same page again. Use an observed link/control or another grounded navigation path "
+                "to reach a materially better source for: " + missing
+            )
+        else:
+            available_tools = TOOL_SCHEMAS
+            state.current_subgoal = (
+                "Verifier rejected the previous answer. Gather materially new evidence for the missing work: "
+                + missing
+            )
         context = state.render()
     elif completion_checkpoint:
         # Tool-biased small models may keep browsing even after they have enough
@@ -95,7 +107,7 @@ def decision():
             "Do not browse. The verifier will reject the answer if evidence is insufficient."
         )
         context = state.render()
-    elif len(stalled_reads) >= 2:
+    elif trailing_stalled_reads >= 2:
         # Recovery must be structural, not merely prompt advice: a weak model
         # can keep selecting the same tool forever. Temporarily remove the
         # stalled action family so the next decision must use another strategy.
@@ -127,7 +139,7 @@ def decision():
             }
         )
 
-    if result.kind == "tool" and result.name == "read_page" and len(stalled_reads) >= 2:
+    if result.kind == "tool" and result.name == "read_page" and trailing_stalled_reads >= 2:
         return jsonify(
             {
                 "kind": "retry",
