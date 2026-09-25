@@ -158,7 +158,7 @@ class RejectThenBrowseProvider:
         return GoalVerification(False, "missing evidence", ["Find the exact limitation"])
 
 
-def test_verifier_rejection_restores_browser_tools_instead_of_repeating_finish() -> None:
+def test_verifier_rejection_blocks_stalled_read_until_navigation_changes_strategy() -> None:
     fake = RejectThenBrowseProvider()
     extension_bridge.provider = fake
     client = extension_bridge.app.test_client()
@@ -178,6 +178,30 @@ def test_verifier_rejection_restores_browser_tools_instead_of_repeating_finish()
     response = client.post("/api/decision", json={"task": state["objective"], "observation": observation, "state": state}).get_json()
     assert response["kind"] == "tool"
     assert response["name"] == "navigate"
-    assert "read_page" in fake.tool_names[-1]
+    assert "read_page" not in fake.tool_names[-1]
+    assert "Do not read the same page again" in response["state"]["current_subgoal"]
     assert "Find the exact limitation" in response["state"]["current_subgoal"]
+    extension_bridge.provider = None
+
+
+def test_navigation_breaks_trailing_read_stall_and_restores_read_page() -> None:
+    fake = RejectThenBrowseProvider()
+    extension_bridge.provider = fake
+    client = extension_bridge.app.test_client()
+    observation = "URL: https://example.test/better\nTITLE: Better\n\nVIEWPORT TEXT:\nexact limitation"
+    state = {
+        "objective": "Explain target",
+        "evidence": [{"source_url": "https://example.test/docs", "title": "Docs", "content": "partial target fact", "query": "target"}],
+        "recent_actions": [
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "duplicate", "progress": False},
+            {"tool": "read_page", "arguments": {"query": "target"}, "ok": True, "message": "duplicate", "progress": False},
+            {"tool": "navigate", "arguments": {"url": "https://example.test/better"}, "ok": True, "message": "navigated", "progress": True},
+        ],
+        "finish_rejections": 1,
+        "remaining_work": ["Find the exact limitation"],
+        "verifier_feedback": ["missing evidence. Find the exact limitation"],
+    }
+    response = client.post("/api/decision", json={"task": state["objective"], "observation": observation, "state": state}).get_json()
+    assert response["kind"] == "tool"
+    assert "read_page" in fake.tool_names[-1]
     extension_bridge.provider = None
