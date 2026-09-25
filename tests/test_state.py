@@ -75,3 +75,23 @@ def test_state_explicitly_redirects_repeated_read_page_stalls() -> None:
     rendered = state.render()
     assert "EXTRACTION STALL" in rendered
     assert "Stop re-reading this target" in rendered
+
+
+def test_rejected_finish_preserves_evidence_and_demands_minimal_recovery() -> None:
+    state = AgentState(objective="Explain a documented API limitation")
+    state.add_evidence({
+        "source_url": "https://example.test/docs",
+        "title": "API docs",
+        "query": "run",
+        "content": "The function runs the awaitable and returns its result.",
+    })
+    state.reject_finish(
+        ["Extract the exact documented limitation"],
+        "The purpose is grounded but the limitation is not.",
+    )
+    rendered = state.render()
+    assert state.evidence[0].content.startswith("The function runs")
+    assert state.current_subgoal.startswith("Verifier rejected completion")
+    assert "collect only this missing item" in state.current_subgoal
+    assert "POST-VERIFIER RECOVERY" in rendered
+    assert "do not invent or guess URLs/anchors" in rendered
