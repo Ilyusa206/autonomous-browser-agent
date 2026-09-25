@@ -70,6 +70,28 @@ def decision():
         tools=TOOL_SCHEMAS,
     )
 
+    # A weak local model may ignore textual recovery directives. Enforce the
+    # generic no-progress invariant at the controller boundary instead of
+    # spending more browser steps on the same extraction family.
+    if result.kind == "tool" and result.name == "read_page":
+        stalled_reads = [a for a in state.recent_actions[-6:] if a.tool == "read_page" and not a.progress]
+        if len(stalled_reads) >= 2:
+            state.no_progress_count += 1
+            state.current_subgoal = (
+                "Extraction is stalled. Do not read this page again; use observed navigation/links, "
+                "navigate to a better source supported by the UI, or finish from existing evidence."
+            )
+            return jsonify(
+                {
+                    "kind": "retry",
+                    "name": None,
+                    "arguments": {},
+                    "text": "Repeated read_page blocked by controller; choose a different action family.",
+                    "verification": None,
+                    "state": state.to_dict(),
+                }
+            )
+
     verification = None
     if result.kind == "finish":
         if task_requires_evidence(task) and not state.evidence:
