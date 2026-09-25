@@ -17,7 +17,9 @@ EXECUTOR_PROMPT = (
     "find_text only locates text; read_page reads it and stores grounded evidence. For informational tasks, call read_page before finishing. "
     "Choose ordinary reversible details yourself. Ask the user only for login/CAPTCHA/manual permission or genuinely unavailable information, never passwords, OTP/2FA codes, API keys, or other secrets. "
     "Treat existing account-specific UI as an authenticated session. Use observed controls yourself. Adapt after failures and obey recovery directives. "
-    "Do not repeat a no-progress action or revisit a page without a concrete reason. If read_page has already produced evidence for a query and repeating it adds nothing, never keep changing max_chars and retrying the same query; use observed navigation/links to reach a more specific source, use a materially different query, or finish if the evidence is sufficient. Finish only when the complete requested result is supported by accumulated evidence/state."
+    "Do not repeat a no-progress action or revisit a page without a concrete reason. If read_page has already produced evidence for a query and repeating it adds nothing, never keep changing max_chars and retrying the same query; use observed navigation/links to reach a more specific source, use a materially different query, or finish if the evidence is sufficient. "
+    "After verifier rejection, treat REMAINING and VERIFIER FEEDBACK as a request for the smallest missing evidence. Preserve and reuse already-grounded evidence. Do not restart the task, discard useful evidence, or navigate to guessed URLs/anchors. Prefer links/controls actually observed on the current page; if the current page already contains evidence that satisfies the missing item, finish from that evidence. "
+    "Never claim that a source says something unless that statement is present in accumulated EVIDENCE. Finish only when the complete requested result is supported by accumulated evidence/state."
 )
 
 VERIFIER_PROMPT = (
