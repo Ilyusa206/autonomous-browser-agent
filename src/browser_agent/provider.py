@@ -281,11 +281,53 @@ class OllamaProvider(GroqProvider):
             {
                 "messages": messages,
                 "format": "json",
-                "options": {"num_predict": 160},
+                "options": {"num_predict": 320},
             },
             phase="verify",
         )
-        data = json.loads(payload.get("message", {}).get("content") or "{}")
+        content = payload.get("message", {}).get("content") or "{}"
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            # Small local models can exhaust num_predict mid-JSON. Retry once
+            # with a deliberately compact schema instead of turning a valid
+            # candidate completion into an HTTP 500.
+            print("[ollama] verifier JSON was truncated/malformed; retrying compact verification")
+            retry = self._native_request(
+                {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Verify whether the candidate fully satisfies the task using the supplied evidence. "
+                                "Return compact JSON only: {\\\"complete\\\":boolean,\\\"summary\\\":string,\\\"missing\\\":[string]}. "
+                                "Keep summary under 120 characters and missing to at most 3 short items."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"TASK:\\n{task}\\n\\nCANDIDATE:\\n{candidate_answer[:1800]}\\n\\n"
+                                f"STATE/EVIDENCE:\\n{history_summary[:3200]}\\n\\n"
+                                f"PAGE:\\n{_compact_observation(observation, 2200)}"
+                            ),
+                        },
+                    ],
+                    "format": "json",
+                    "options": {"num_predict": 240},
+                },
+                phase="verify-retry",
+            )
+            retry_content = retry.get("message", {}).get("content") or "{}"
+            try:
+                data = json.loads(retry_content)
+            except json.JSONDecodeError:
+                print("[ollama] verifier retry JSON was malformed; returning a safe incomplete result")
+                return GoalVerification(
+                    False,
+                    "Verifier output was malformed; completion was not accepted.",
+                    ["Retry verification from the preserved candidate and evidence."],
+                )
         return GoalVerification(
             bool(data.get("complete")),
             str(data.get("summary", "")),
