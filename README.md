@@ -73,6 +73,28 @@ GROQ_API_KEY=your_key_here
 
 Файл `.env` и профиль браузера исключены из Git.
 
+### Основной demo-контур: расширение + bridge
+
+1. Откройте `opera://extensions` (или `chrome://extensions`), включите режим разработчика и загрузите каталог `extension/` как unpacked extension.
+2. Настройте провайдера в локальном `.env` или переменными окружения.
+3. Запустите bridge:
+
+```powershell
+browser-agent-bridge
+```
+
+4. Откройте обычную HTTP/HTTPS-вкладку, нажмите иконку **Browser Agent**, введите одну многошаговую задачу и нажмите **«Запустить»**. Mini-app остаётся отдельным окном, а агент автономно наблюдает текущую вкладку, вызывает generic tools и показывает timeline.
+
+Для локального Ollama, например:
+
+```text
+BROWSER_AGENT_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+OLLAMA_MODEL=qwen3:8b
+```
+
+Для буквального соответствия исходному требованию задания выберите официальный `openai` или `anthropic` provider и задайте соответствующий API key/model через environment. Секреты в репозиторий не коммитятся.
+
 ### Визуальная панель
 
 ```powershell
