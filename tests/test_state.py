@@ -63,3 +63,15 @@ def test_page_fingerprint_includes_viewport_after_large_element_dump() -> None:
     first = header + "\nVIEWPORT TEXT:\nfirst result"
     second = header + "\nVIEWPORT TEXT:\nsecond result"
     assert observation_identity(first)[2] != observation_identity(second)[2]
+
+
+def test_state_explicitly_redirects_repeated_read_page_stalls() -> None:
+    state = AgentState(objective="Read a specific fact")
+    before = state.observe(_observation())
+    result = {"tool": "read_page", "arguments": {"query": "alpha"}, "ok": True, "message": "read", "before_fingerprint": before}
+    state.ingest_result(result, after_observation=_observation())
+    result["before_fingerprint"] = state.current_fingerprint
+    state.ingest_result(result, after_observation=_observation())
+    rendered = state.render()
+    assert "EXTRACTION STALL" in rendered
+    assert "Stop re-reading this target" in rendered
