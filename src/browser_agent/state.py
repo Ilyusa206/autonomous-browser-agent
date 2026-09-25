@@ -282,9 +282,10 @@ class AgentState:
             tail.append("FAILURES: " + " | ".join(self.failures[-4:]))
         if self.verifier_feedback:
             tail.append("VERIFIER FEEDBACK: " + " | ".join(self.verifier_feedback[-3:]))
-        if self.finish_rejections:
+        if self.finish_rejections and self.remaining_work:
             tail.append(
-                "POST-VERIFIER RECOVERY: preserve accumulated evidence; satisfy REMAINING with the smallest additional extraction. "
+                "POST-VERIFIER RECOVERY: preserve accumulated evidence and satisfy REMAINING with the smallest additional extraction. "
+                "If newly collected evidence now satisfies REMAINING, retry completion instead of browsing further. "
                 "Do not restart completed work and do not invent or guess URLs/anchors. Use only destinations supported by observed UI/evidence."
             )
         tail.append(f"NO-PROGRESS COUNT: {self.no_progress_count}; FINISH REJECTIONS: {self.finish_rejections}")
